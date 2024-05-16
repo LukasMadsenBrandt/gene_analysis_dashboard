@@ -94,6 +94,7 @@ This project provides a dashboard for gene analysis using data from GENCODE and 
     ```
 
 ## Directory Structure
+```sh
 gene_analysis_dashboard/
 ├── app.py
 ├── cache/
@@ -120,7 +121,7 @@ gene_analysis_dashboard/
 │   ├── data_preprocessing.py
 │   ├── decorators.py
 │   ├── granger_causality.py
-
+```
 
 ## Usage
 
@@ -136,6 +137,3 @@ Contributions are welcome. Please submit a pull request or open an issue to disc
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-
-
->>>>>>> master
