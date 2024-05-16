@@ -93,6 +93,35 @@ This project provides a dashboard for gene analysis using data from GENCODE and 
     python app.py
     ```
 
+## Directory Structure
+gene_analysis_dashboard/
+├── app.py
+├── cache/
+├── Data/
+│   ├── GENCODE/
+│   │   ├── GENCODE_Human
+│   │   ├── gene_id_to_gene_name.txt
+│   │   ├── gene_names.txt
+│   │   └── map_speciment_to_gene.csv
+│   └── Kutsche/
+│       ├── genes.txt
+│       ├── Kutsche_Counts.txt
+│       └── search_genes.sh
+├── gene_analysis_gencode/
+│   ├── config.py
+│   ├── data_filtering.py
+│   ├── data_preprocessing.py
+│   ├── decorators.py
+│   ├── granger_causality.py
+
+├── gene_analysis_kutsche/
+│   ├── config.py
+│   ├── data_filtering.py
+│   ├── data_preprocessing.py
+│   ├── decorators.py
+│   ├── granger_causality.py
+
+
 ## Usage
 
 1. **Select the dataset and summarization technique**.
@@ -106,4 +135,6 @@ Contributions are welcome. Please submit a pull request or open an issue to disc
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+
 
