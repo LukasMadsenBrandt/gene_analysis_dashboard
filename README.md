@@ -66,7 +66,7 @@ This project provides a dashboard for gene analysis using data from GENCODE and 
 1. **Clone the Repository**:
     ```sh
     git clone https://github.com/LukasMadsenBrandt/gene_analysis_dashboard.git
-    cd gene_analysis_dashboard.git
+    cd gene_analysis_dashboard
     ```
 
 2. **Create and Activate Virtual Environment**:
