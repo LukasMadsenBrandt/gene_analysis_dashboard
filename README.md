@@ -1,6 +1,3 @@
-<<<<<<< HEAD
-# gene_analysis_dashboard
-=======
 # Gene Analysis Dashboard
 
 ## Description
