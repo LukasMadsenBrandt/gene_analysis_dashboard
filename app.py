@@ -24,6 +24,7 @@ import html as html_escape
 import os
 import pandas as pd
 from collections import Counter
+import warnings
 
 
 
@@ -41,6 +42,9 @@ from gene_analysis_kutsche.data_preprocessing import load_and_preprocess_data as
 from gene_analysis_kutsche.data_filtering import filter_data_proximity_based_weights as filter_proximity_kutsche
 from gene_analysis_kutsche.data_filtering import filter_data_arithmetic_mean as filter_mean_kutsche
 from gene_analysis_kutsche.data_filtering import filter_data_median as filter_median_kutsche
+
+warnings.filterwarnings("ignore", message="'linear' x-axis tick spacing not even")
+
 
 debugging = False
 # Create cache directory if it doesn't exist
@@ -693,10 +697,14 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
                 map_speciment_to_gene_file=os.path.join('Data', 'GENCODE', 'map_speciment_to_gene.csv')
             )
             data_human, df, day_map = filter_function(df_human)
+            #Remove rows with all 0's
+            data_human = data_human.loc[(data_human != 0).any(axis=1)]
             data_dict[summarization_technique] = perform_gc_gencode(data_human, genes_file=os.path.join('Data', 'GENCODE', 'gene_names.txt'))
         elif dataset == 'kutsche':
             df_human = load_and_preprocess_kutsche(os.path.join('Data', 'Kutsche', 'genes.txt'))
             data_human, df, day_map = filter_function(df_human)
+            #Remove rows with all 0's
+            data_human = data_human.loc[(data_human != 0).any(axis=1)]
             data_dict[summarization_technique] = perform_gc_kutsche(data_human)
         save_cache((data_dict[summarization_technique], data_human), cache_file)
         debug_print(f"Computed and saved {dataset} data ({summarization_technique}) to cache")
@@ -718,6 +726,8 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
                     elif summarization_technique == 'median':
                         filter_function = filter_median_kutsche
                     data_human, df, day_map = filter_function(df_human)
+                    #Remove rows with all 0's
+                    data_human = data_human.loc[(data_human != 0).any(axis=1)]
                     data_dict[summarization_technique] = perform_gc_kutsche(data_human)
                     save_cache((data_dict[summarization_technique], data_human), cache_file)
             elif ds == 'gencode':
@@ -738,6 +748,8 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
                         filter_function = filter_mean_gencode
                     elif summarization_technique == 'median':
                         filter_function = filter_median_gencode
+                    #Remove rows with all 0's
+                    data_human = data_human.loc[(data_human != 0).any(axis=1)]
                     data_human, df, day_map = filter_function(df_human)
                     data_dict[summarization_technique] = perform_gc_gencode(data_human, genes_file=os.path.join('Data', 'GENCODE', 'gene_names.txt'))
                     save_cache((data_dict[summarization_technique], data_human), cache_file)
@@ -771,6 +783,7 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
     # Ensure all communities are selected by default
     community_values = [comm['value'] for comm in community_options]  # Select all communities
     debug_print("Community detection and color assignment complete.")
+
 
     # Return the data to be stored in dcc.Store
     return community_options, community_values, "", {'display': 'none'}, 'Please select options and press "Send" to generate the graph.', data_human.to_dict()
