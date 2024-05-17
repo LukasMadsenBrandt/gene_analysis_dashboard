@@ -1,3 +1,5 @@
+import matplotlib
+matplotlib.use('Agg')
 import shutil
 from matplotlib import pyplot as plt
 import networkx as nx
@@ -7,6 +9,8 @@ import dash
 from dash import dcc, html
 from dash.dependencies import Input, Output, State
 import dash_bootstrap_components as dbc
+from plotly.subplots import make_subplots
+import plotly.io as pio
 
 # Community detection libraries
 from community import community_louvain
@@ -40,14 +44,20 @@ from gene_analysis_kutsche.data_filtering import filter_data_median as filter_me
 
 debugging = False
 # Create cache directory if it doesn't exist
+
 cache_dir = os.path.join(os.getcwd(), 'cache')
-if not os.path.exists(cache_dir):
-    os.makedirs(cache_dir)
+plots_dir = os.path.join(os.getcwd(), 'plots')
+dirs = [cache_dir, plots_dir]
+
+for directory in dirs:
+    if not os.path.exists(directory):
+        os.makedirs(directory)
 
 # Debugging utilities
-def debug_print(message):
+def debug_print(*args):
     if debugging:
-        print(message)
+        print(" ".join(map(str, args)))
+
 
 def debug_print_edges(edges, message):
     debug_print(message)
@@ -83,9 +93,9 @@ def load_cache(filename):
     debug_print(f"No cache found for {filename}")  # Debug statement
     return None
 
-def clear_cache_directory(cache_dir):
-    for filename in os.listdir(cache_dir):
-        file_path = os.path.join(cache_dir, filename)
+def clear_directory(dir):
+    for filename in os.listdir(dir):
+        file_path = os.path.join(dir, filename)
         try:
             if os.path.isfile(file_path) or os.path.islink(file_path):
                 os.unlink(file_path)
@@ -487,6 +497,7 @@ layout_options = [
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 app.layout = html.Div([
     dcc.Store(id='toggle-state', data=True),
+    dcc.Store(id='df-store'),  # Store for the DataFrame
     html.Div([
         html.Label('Dataset:', style={'color': 'white'}),
         dcc.Dropdown(
@@ -523,6 +534,7 @@ app.layout = html.Div([
         ),
         html.Label('Search for a gene:', style={'marginTop': '20px', 'color': 'white'}),
         dcc.Input(id='search-bar', type='text', placeholder='Search for a gene...', debounce=True, value='', style={'width': '100%', 'marginBottom': '20px', 'backgroundColor': 'white', 'color': 'black'}),
+        dbc.Button("Show Plots", id="show-plots-button", color="primary", style={'marginTop': '10px'}),
         html.Label('Graph Layout:', style={'marginTop': '20px', 'color': 'white'}),
         dcc.Dropdown(
             id='layout-dropdown',
@@ -561,9 +573,12 @@ app.layout = html.Div([
     ], style={'position': 'fixed', 'top': '10px', 'left': '10px', 'width': '300px', 'zIndex': 1000, 'backgroundColor': 'rgba(0,0,0,0.7)', 'padding': '10px', 'borderRadius': '10px'}),
     
     html.Div([
-        html.Iframe(id='network-graph', style={'width': '100%', 'height': '100vh', 'border': 'none', 'display': 'block'})
+        html.Iframe(id='network-graph', style={'width': '100%', 'height': '100vh', 'border': 'none', 'display': 'block'}),
+        html.Div(id='expression-plots')  # Container for the expression plots
     ])
 ], style={'padding': '20px', 'position': 'relative'})
+
+
 
 # Apply custom CSS styles
 app.index_string = '''
@@ -614,7 +629,8 @@ app.index_string = '''
      Output('community-checklist', 'value', allow_duplicate=True),
      Output('selections-output', 'children', allow_duplicate=True),
      Output('instructions', 'style'),
-     Output('instructions', 'children')],
+     Output('instructions', 'children'),
+     Output('df-store', 'data')],  # Store the DataFrame
     [Input('send-button', 'n_clicks')],
     [State('dataset-dropdown', 'value'),
      State('summarization-technique-dropdown', 'value'),
@@ -624,15 +640,16 @@ app.index_string = '''
 )
 def send_selections(n_clicks, dataset, summarization_technique, community_detection_method, toggle_state):
     if n_clicks is None:
-        return [], [], "", {'display': 'block'}, 'Please select options and press "Send" to generate the graph.'
+        return [], [], "", {'display': 'block'}, 'Please select options and press "Send" to generate the graph.', None
 
     if not dataset or not summarization_technique:
-        return [], [], "", {'display': 'block'}, 'Both dataset and summarization technique must be selected.'
+        return [], [], "", {'display': 'block'}, 'Both dataset and summarization technique must be selected.', None
 
     global gencode_data, kutsche_data
 
     data_dict = None
     filter_function = None
+    data_human = None
 
     debug_print(f"Button clicked. Dataset: {dataset}, Summarization Technique: {summarization_technique}")
 
@@ -657,75 +674,73 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
 
     if data_dict is None:
         debug_print(f"Error: data_dict is None for dataset {dataset}")
-        return [], [], "", {'display': 'block'}, 'Data dictionary is not initialized.'
+        return [], [], "", {'display': 'block'}, 'Data dictionary is not initialized.', None
 
     debug_print(f"data_dict initialized: {data_dict}")
 
-    if dataset != 'intersection':
-        cache_file = get_cache_filename(dataset, summarization_technique)
-        if data_dict[summarization_technique] is None:
-            data_dict[summarization_technique] = load_cache(cache_file)
-            if data_dict[summarization_technique] is not None:
-                debug_print(f"Loaded {dataset} data ({summarization_technique}) from cache")
-        if data_dict[summarization_technique] is None:
-            debug_print(f"No cache found for {dataset} data ({summarization_technique}), computing...")
-            if dataset == 'gencode':
-                #set_correct_directory_gencode()
-                df_human = mapper_gencode(
-                    datafile=os.path.join('Data', 'GENCODE', 'GENCODE_Human'),
-                    mappingfile=os.path.join('Data', 'GENCODE', 'gene_id_to_gene_name.txt'),
-                    map_speciment_to_gene_file=os.path.join('Data', 'GENCODE', 'map_speciment_to_gene.csv')
-                )
-                data_human, df, day_map = filter_function(df_human)
-                data_dict[summarization_technique] = perform_gc_gencode(data_human, genes_file=os.path.join('Data', 'GENCODE', 'gene_names.txt'))
-            elif dataset == 'kutsche':
-                #set_correct_directory_kutsche()
-                df_human = load_and_preprocess_kutsche(os.path.join('Data', 'Kutsche', 'genes.txt'))
-                data_human, df, day_map = filter_function(df_human)
-                data_dict[summarization_technique] = perform_gc_kutsche(data_human)
-            save_cache(data_dict[summarization_technique], cache_file)
-            debug_print(f"Computed and saved {dataset} data ({summarization_technique}) to cache")
+    cache_file = get_cache_filename(dataset, summarization_technique)
+    cache_content = load_cache(cache_file)
+    
+    if cache_content is not None:
+        data_dict[summarization_technique], data_human = cache_content
+        debug_print(f"Loaded {dataset} data ({summarization_technique}) from cache")
+    else:
+        debug_print(f"No cache found for {dataset} data ({summarization_technique}), computing...")
+        if dataset == 'gencode':
+            df_human = mapper_gencode(
+                datafile=os.path.join('Data', 'GENCODE', 'GENCODE_Human'),
+                mappingfile=os.path.join('Data', 'GENCODE', 'gene_id_to_gene_name.txt'),
+                map_speciment_to_gene_file=os.path.join('Data', 'GENCODE', 'map_speciment_to_gene.csv')
+            )
+            data_human, df, day_map = filter_function(df_human)
+            data_dict[summarization_technique] = perform_gc_gencode(data_human, genes_file=os.path.join('Data', 'GENCODE', 'gene_names.txt'))
+        elif dataset == 'kutsche':
+            df_human = load_and_preprocess_kutsche(os.path.join('Data', 'Kutsche', 'genes.txt'))
+            data_human, df, day_map = filter_function(df_human)
+            data_dict[summarization_technique] = perform_gc_kutsche(data_human)
+        save_cache((data_dict[summarization_technique], data_human), cache_file)
+        debug_print(f"Computed and saved {dataset} data ({summarization_technique}) to cache")
 
     if dataset == 'intersection':
         for ds in ['kutsche', 'gencode']:
             if ds == 'kutsche':
                 data_dict = kutsche_data
-                #set_correct_directory_kutsche()
                 cache_file = get_cache_filename('kutsche', summarization_technique)
-                if data_dict[summarization_technique] is None:
-                    data_dict[summarization_technique] = load_cache(cache_file)
-                    if data_dict[summarization_technique] is None:
-                        df_human = load_and_preprocess_kutsche(os.path.join('Data', 'Kutsche', 'genes.txt'))
-                        if summarization_technique == 'proximity':
-                            filter_function = filter_proximity_kutsche
-                        elif summarization_technique == 'mean':
-                            filter_function = filter_mean_kutsche
-                        elif summarization_technique == 'median':
-                            filter_function = filter_median_kutsche
-                        data_human, df, day_map = filter_function(df_human)
-                        data_dict[summarization_technique] = perform_gc_kutsche(data_human)
-                        save_cache(data_dict[summarization_technique], cache_file)
+                cache_content = load_cache(cache_file)
+                if cache_content is not None:
+                    data_dict[summarization_technique], data_human = cache_content
+                else:
+                    df_human = load_and_preprocess_kutsche(os.path.join('Data', 'Kutsche', 'genes.txt'))
+                    if summarization_technique == 'proximity':
+                        filter_function = filter_proximity_kutsche
+                    elif summarization_technique == 'mean':
+                        filter_function = filter_mean_kutsche
+                    elif summarization_technique == 'median':
+                        filter_function = filter_median_kutsche
+                    data_human, df, day_map = filter_function(df_human)
+                    data_dict[summarization_technique] = perform_gc_kutsche(data_human)
+                    save_cache((data_dict[summarization_technique], data_human), cache_file)
             elif ds == 'gencode':
                 data_dict = gencode_data
-                #set_correct_directory_gencode()
                 cache_file = get_cache_filename('gencode', summarization_technique)
-                if data_dict[summarization_technique] is None:
-                    data_dict[summarization_technique] = load_cache(cache_file)
-                    if data_dict[summarization_technique] is None:
-                        df_human = mapper_gencode(
-                            datafile=os.path.join('Data', 'GENCODE', 'GENCODE_Human'),
-                            mappingfile=os.path.join('Data', 'GENCODE', 'gene_id_to_gene_name.txt'),
-                            map_speciment_to_gene_file=os.path.join('Data', 'GENCODE', 'map_speciment_to_gene.csv')
-                        )
-                        if summarization_technique == 'proximity':
-                            filter_function = filter_proximity_gencode
-                        elif summarization_technique == 'mean':
-                            filter_function = filter_mean_gencode
-                        elif summarization_technique == 'median':
-                            filter_function = filter_median_gencode
-                        data_human, df, day_map = filter_function(df_human)
-                        data_dict[summarization_technique] = perform_gc_gencode(data_human, genes_file=os.path.join('Data', 'GENCODE', 'gene_names.txt'))
-                        save_cache(data_dict[summarization_technique], cache_file)
+                cache_content = load_cache(cache_file)
+                if cache_content is not None:
+                    data_dict[summarization_technique], data_human = cache_content
+                else:
+                    df_human = mapper_gencode(
+                        datafile=os.path.join('Data', 'GENCODE', 'GENCODE_Human'),
+                        mappingfile=os.path.join('Data', 'GENCODE', 'gene_id_to_gene_name.txt'),
+                        map_speciment_to_gene_file=os.path.join('Data', 'GENCODE', 'map_speciment_to_gene.csv')
+                    )
+                    if summarization_technique == 'proximity':
+                        filter_function = filter_proximity_gencode
+                    elif summarization_technique == 'mean':
+                        filter_function = filter_mean_gencode
+                    elif summarization_technique == 'median':
+                        filter_function = filter_median_gencode
+                    data_human, df, day_map = filter_function(df_human)
+                    data_dict[summarization_technique] = perform_gc_gencode(data_human, genes_file=os.path.join('Data', 'GENCODE', 'gene_names.txt'))
+                    save_cache((data_dict[summarization_technique], data_human), cache_file)
 
         kutsche_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=0.05)
         gencode_edges = collect_significant_edges_gencode(gencode_data[summarization_technique], p_value_threshold=0.05)
@@ -741,7 +756,7 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
         tf_genes_proximity = data_dict[summarization_technique]
 
     if tf_genes_proximity is None:
-        return [], [], "", {'display': 'none'}, 'No significant edges found.'
+        return [], [], "", {'display': 'none'}, 'No significant edges found.', None
 
     debug_print(f"Graph update: Dataset: {dataset}, Summarization Technique: {summarization_technique}, P-threshold: 0.05, Search: , Layout: dot")
     significant_edges = tf_genes_proximity if dataset == 'intersection' else collect_significant_edges_gencode(gencode_data[summarization_technique], p_value_threshold=0.05) if dataset == 'gencode' else collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=0.05)
@@ -757,7 +772,9 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
     community_values = [comm['value'] for comm in community_options]  # Select all communities
     debug_print("Community detection and color assignment complete.")
 
-    return community_options, community_values, "", {'display': 'none'}, 'Please select options and press "Send" to generate the graph.'
+    # Return the data to be stored in dcc.Store
+    return community_options, community_values, "", {'display': 'none'}, 'Please select options and press "Send" to generate the graph.', data_human.to_dict()
+
 
 @app.callback(
     [Output('network-graph', 'srcDoc'),
@@ -905,9 +922,216 @@ def show_hide_num_communities_input(method):
         return {'display': 'block'}
     return {'display': 'none'}
 
+def create_combined_plot(figures, gene_names, title):
+    # Determine the layout for subplots
+    num_plots = len(figures)
+    num_cols = 3  # Adjust as needed
+    num_rows = -(-num_plots // num_cols)  # Ceiling division
+
+    # Create a subplot figure
+    subplot_titles = []
+    for gene_name in gene_names:
+        subplot_titles.append(gene_name)
+
+    subplot_fig = make_subplots(rows=num_rows, cols=num_cols, subplot_titles=subplot_titles)
+
+    # Add each figure to the subplot
+    for i, fig in enumerate(figures):
+        row = i // num_cols + 1
+        col = i % num_cols + 1
+        for trace in fig.data:
+            subplot_fig.add_trace(trace, row=row, col=col)
+
+    # Update layout for the combined figure
+    subplot_fig.update_layout(height=500*num_rows, width=500*num_cols, title_text=title)
+    subplot_fig.update_xaxes(title_text="Timeperiod")
+    subplot_fig.update_yaxes(title_text="Expression levels")
+
+    return subplot_fig
+
+@app.callback(
+    Output('expression-plots', 'children'),
+    [Input('show-plots-button', 'n_clicks')],
+    [State('search-bar', 'value'),
+     State('dataset-dropdown', 'value'),
+     State('summarization-technique-dropdown', 'value'),
+     State('p-threshold-slider', 'value'),
+     State('df-store', 'data')]  # Retrieve the DataFrame from store
+)
+def show_expression_plots(n_clicks, search_gene, dataset, summarization_technique, p_threshold, df_store):
+    debug_print("Debug: Entered show_expression_plots")
+    if n_clicks is None or not search_gene:
+        debug_print("Debug: No clicks or no search gene provided")
+        return ""
+
+    if not dataset or not summarization_technique:
+        debug_print("Debug: Dataset or summarization technique not selected")
+        return "Please select both dataset and summarization technique."
+
+    global gencode_data, kutsche_data
+
+    if dataset == 'intersection':
+        debug_print("Debug: Intersection dataset selected, not supported")
+        return "Expression plots for intersection dataset are not supported."
+
+    # Convert the stored data back to DataFrame
+    df = pd.DataFrame(df_store)
+
+    data_dict = gencode_data if dataset == 'gencode' else kutsche_data
+    data = data_dict.get(summarization_technique)
+
+    if data is None:
+        debug_print(f"Debug: No data available for {dataset} and {summarization_technique}")
+        return f"No data available for the selected dataset ({dataset}) and summarization technique ({summarization_technique})."
+
+    # Retrieve the significant edges
+    significant_edges = collect_significant_edges_gencode(data, p_value_threshold=p_threshold) if dataset == 'gencode' else collect_significant_edges_kutsche(data, p_value_threshold=p_threshold)
+    debug_print(f"Debug: Retrieved {len(significant_edges)} significant edges")
+
+    # Find genes influenced by the searched gene
+    influenced_genes = [edge[1][0] for edge in significant_edges if edge[0][0] == search_gene]
+    debug_print(f"Debug: Influenced genes - {influenced_genes}")
+
+    if not influenced_genes:
+        debug_print(f"Debug: No genes influenced by {search_gene}")
+        return f"No genes influenced by {search_gene} found."
+
+    # Retrieve and plot expression data for the searched gene and influenced genes
+    figures = []
+    gene_names = []
+    
+    _, fig = plot_gene_expression(df.loc[[search_gene]], print_data=True)
+    figures.append(fig)
+    gene_names.append(search_gene)
+    
+    for gene in influenced_genes:
+        _, fig = plot_gene_expression(df.loc[[gene]], print_data=True)
+        figures.append(fig)
+        gene_names.append(gene)
+
+    debug_print("Debug: Figures generated", figures)
+
+    # Create combined plot
+    title = f"Gene Expression Plots for {search_gene} and the genes it may Granger Cause, with P-value Threshold: {p_threshold}, Dataset: {dataset}, and Summarization Technique: {summarization_technique}"
+    combined_plot = create_combined_plot(figures, gene_names, title)
+    debug_print("Debug: Combined plot created")
+
+    if not combined_plot:
+        debug_print("Debug: Combined plot is empty")
+        return "No plots to display."
+
+    pio.write_html(combined_plot, os.path.join('plots',f'{dataset}_{search_gene}_{summarization_technique}_{p_threshold}.html'), auto_open=True)
+    return dcc.Graph(figure=combined_plot)
+
+def plot_gene_expression(df_human, print_data=False):
+    import plotly.tools as tls
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    """
+    Plot gene expression data.
+    """
+    debug_print("Debug: Plotting gene expression data")
+    x = df_human.columns.astype(float)  # Ensure x-values are numeric
+    debug_print(f"Debug: x_values - {x}")
+    num_genes = df_human.shape[0]
+    num_cols = 7
+    num_rows = int(np.ceil(num_genes / num_cols))
+    fig, axes = plt.subplots(num_rows, num_cols, figsize=(15, num_rows * 2.5))
+    axes = axes.flatten()
+
+    for i, (gene, series) in enumerate(df_human.iterrows()):
+        ax = axes[i]
+        y = series.values
+
+        if print_data:
+            debug_print(f'Gene: {gene}')
+            debug_print(f'X values: {x}')
+            debug_print(f'Y values: {y}')
+            debug_print('---')
+
+        ax.plot(x, y, color='dodgerblue', lw=2)
+        ax.scatter(x, y, color='darkorange', alpha=0.6)
+        ax.set_ylim([min(y) * 0.9, max(y) * 1.1])
+        ax.set_xticks(x)  # Use the numeric x-values
+        ax.set_xticklabels(x.astype(int))  # Ensure labels are integers
+        ax.set_title(gene, fontsize=10, fontweight='bold')
+        ax.grid(True)
+
+    fig.text(0.5, 0.02, 'Time (days)', ha='center', va='center')
+    fig.text(0.02, 0.5, 'Expression', ha='center', va='center', rotation='vertical')
+
+    for j in range(i + 1, len(axes)):
+        axes[j].set_visible(False)
+
+    plt.tight_layout(h_pad=2, rect=[0.03, 0.03, 1, 0.95])
+    debug_print("Debug: Completed plot_gene_expression")
+    
+    plotly_fig = tls.mpl_to_plotly(fig)
+    graph = dcc.Graph(figure=plotly_fig)
+    
+    return graph, plotly_fig  # Return both the plotly graph and the plotly figure
+
+def fig_to_plotly(fig):
+    import plotly.tools as tls
+    debug_print("Debug: Converting Matplotlib figure to Plotly")
+    plotly_fig = tls.mpl_to_plotly(fig)
+    debug_print("Debug: Conversion complete")
+    return plotly_fig
+
+
+@app.callback(
+    Output('show-plots-button', 'style'),
+    [Input('search-bar', 'value'),
+     Input('dataset-dropdown', 'value'),
+     Input('summarization-technique-dropdown', 'value'),
+     Input('p-threshold-slider', 'value'),
+     Input('community-detection-method-dropdown', 'value'),
+     Input('max-num-communities', 'value')],
+    [State('community-checklist', 'value')]
+)
+def update_show_plots_button(search_value, dataset, summarization_technique, p_threshold, community_detection_method, num_communities, selected_communities):
+    if not search_value:
+        return {'display': 'none'}
+
+    global gencode_data, kutsche_data
+
+    if dataset == 'intersection':
+        return {'display': 'none'}
+
+    data_dict = gencode_data if dataset == 'gencode' else kutsche_data
+    data = data_dict.get(summarization_technique)
+
+    if data is None:
+        return {'display': 'none'}
+
+    # Retrieve the significant edges
+    significant_edges = collect_significant_edges_gencode(data, p_value_threshold=p_threshold) if dataset == 'gencode' else collect_significant_edges_kutsche(data, p_value_threshold=p_threshold)
+
+    # Create the graph and apply community detection
+    G = create_network(significant_edges)
+    graph_pickle = pickle.dumps(G)
+    partition = cached_apply_community_detection(graph_pickle, method=community_detection_method, num_communities=num_communities if community_detection_method != 'louvain' else None)
+
+    # If no communities are selected, use all communities
+    if not selected_communities:
+        selected_communities = set(partition.values())
+    nodes_to_keep = {node for node, community in partition.items() if community in selected_communities}
+    G = G.subgraph(nodes_to_keep).copy()
+
+    # Check if the search value is a node in the graph
+    if search_value in G.nodes():
+        return {'display': 'inline-block'}
+    else:
+        return {'display': 'none'}
+
+
+
+
 # Run the app
 if __name__ == '__main__':
     gencode_data = {'proximity': None, 'mean': None, 'median': None}
     kutsche_data = {'proximity': None, 'mean': None, 'median': None}
-    clear_cache_directory(cache_dir)
+    clear_directory(cache_dir)
+    clear_directory(plots_dir)
     app.run_server(debug=True)
