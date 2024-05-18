@@ -1,3 +1,4 @@
+import subprocess
 import matplotlib
 matplotlib.use('Agg')
 import shutil
@@ -493,7 +494,7 @@ html_template = """
 layout_options = [
     {'label': 'DOT (Hierarchical)', 'value': 'dot', 'description': 'Hierarchical or layered drawings of directed graphs.'},
     {'label': 'FDP (Force-Directed Placement)', 'value': 'fdp', 'description': 'Force-Directed Placement.'},
-    {'label': 'SFDP (Scalable FDP)', 'value': 'sfdp', 'description': 'Scalable Force-Directed Placement.'},
+    {'label': 'SFDP (Scalable FDP) Mac & Linux', 'value': 'sfdp', 'description': 'Scalable Force-Directed Placement.'},
     {'label': 'CIRCO (Circular)', 'value': 'circo', 'description': 'Circular layout.'},
 ]
 
@@ -524,8 +525,16 @@ app.layout = html.Div([
             value='proximity',
             style={'backgroundColor': 'white', 'color': 'black', 'marginBottom': '20px'}
         ),
-        dbc.Button("Send", id="send-button", color="secondary", style={'marginTop': '10px', 'marginBottom': '20px'}),
-        html.Div(id='instructions', children='Please select options and press "Send" to generate the graph.', style={'marginTop': '20px', 'color': 'red'}),
+        dbc.Button("Send", id="send-button", color="primary", style={'marginTop': '10px', 'marginBottom': '20px'}),
+        dcc.Loading(
+            id="loading-send",
+            type="default",
+            children=[
+                html.Div(id='instructions', children='Please select options and press "Send" to generate the graph.', style={'marginTop': '20px', 'color': 'red'}),
+                html.Div(id='community-checklist-container'),
+                html.Div(id='selections-output'),
+            ]
+        ),
         html.Label('P-value threshold:', style={'color': 'white'}),
         dcc.Slider(
             id='p-threshold-slider',
@@ -577,8 +586,20 @@ app.layout = html.Div([
     ], style={'position': 'fixed', 'top': '10px', 'left': '10px', 'width': '300px', 'zIndex': 1000, 'backgroundColor': 'rgba(0,0,0,0.7)', 'padding': '10px', 'borderRadius': '10px'}),
     
     html.Div([
-        html.Iframe(id='network-graph', style={'width': '100%', 'height': '100vh', 'border': 'none', 'display': 'block'}),
-        html.Div(id='expression-plots')  # Container for the expression plots
+        dcc.Loading(
+            id="loading-network-graph",
+            type="default",
+            children=[
+                html.Iframe(id='network-graph', style={'width': '100%', 'height': '100vh', 'border': 'none', 'display': 'block'}),
+            ]
+        ),
+        dcc.Loading(
+            id="loading-expression-plots",
+            type="default",
+            children=[
+                html.Div(id='expression-plots')  # Container for the expression plots
+            ]
+        ),
     ])
 ], style={'padding': '20px', 'position': 'relative'})
 
@@ -883,14 +904,19 @@ def handle_graph_update(p_threshold, search_value, layout, selected_communities,
 
     if not selected_communities:
         message = "Please select at least one community to display the graph."
-        debug_print("No communities selected.")
         return "", message, community_options, []
 
-    graph_svg = dot.pipe(format='svg').decode('utf-8')
-    graph_html = html_template.format(graph=graph_svg)
+    try:
+        graph_svg = dot.pipe(format='svg').decode('utf-8')
+        graph_html = html_template.format(graph=graph_svg)
+        return graph_html, error_message, community_options, selected_communities
+    except subprocess.CalledProcessError as e:
+        error_message = f"Error generating graph: {e}"
+        return "", error_message, community_options, selected_communities
 
-    debug_print("Graph HTML content generated.")
-    return graph_html, error_message, community_options, selected_communities
+    except Exception as e:
+        error_message = f"An unexpected error occurred: {e}"
+        return "", error_message, community_options, selected_communities
 
 
 @app.callback(
