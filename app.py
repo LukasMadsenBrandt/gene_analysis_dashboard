@@ -504,6 +504,7 @@ app.layout = html.Div([
     dcc.Store(id='toggle-state', data=True),
     dcc.Store(id='df-store'),  # Store for the DataFrame
     html.Div([
+        # Controls
         html.Label('Dataset:', style={'color': 'white'}),
         dcc.Dropdown(
             id='dataset-dropdown',
@@ -525,13 +526,13 @@ app.layout = html.Div([
             value='proximity',
             style={'backgroundColor': 'white', 'color': 'black', 'marginBottom': '20px'}
         ),
-        dbc.Button("Send", id="send-button", color="primary", style={'marginTop': '10px', 'marginBottom': '20px'}),
+        dbc.Button("Send", id="send-button", color="secondary", style={'marginTop': '10px', 'marginBottom': '20px'}),
         dcc.Loading(
             id="loading-send",
             type="default",
             children=[
                 html.Div(id='instructions', children='Please select options and press "Send" to generate the graph.', style={'marginTop': '20px', 'color': 'red'}),
-                html.Div(id='community-checklist-container'),
+                html.Div(id='community-checklist-container-unique'),  # Ensure unique ID
                 html.Div(id='selections-output'),
             ]
         ),
@@ -571,7 +572,7 @@ app.layout = html.Div([
         ], style={'display': 'none'}),
         dbc.Button("Toggle All", id="toggle-all-button", color="primary", style={'marginTop': '10px'}),
         html.Label('Select Communities:', style={'marginTop': '20px', 'color': 'white'}),
-        html.Div(id='community-checklist-container', children=[
+        html.Div(id='community-checklist-container-2', children=[
             dbc.Checklist(
                 id='community-checklist',
                 options=[],  # Options will be set in callback
@@ -579,10 +580,10 @@ app.layout = html.Div([
                 inline=True,
                 style={'color': 'white'}
             ),
-        ], style={'maxHeight': '200px', 'overflowY': 'scroll'}),  # Added styles for scrollable container
+        ], style={'maxHeight': '200px', 'overflowY': 'scroll'}),
         
         html.Div(id='node-edge-info', style={'marginTop': '20px', 'color': 'white'}),
-        html.Div(id='selections-output', style={'marginTop': '20px', 'color': 'white'}),
+        html.Div(id='selections-output-2', style={'marginTop': '20px', 'color': 'white'}),
     ], style={'position': 'fixed', 'top': '10px', 'left': '10px', 'width': '300px', 'zIndex': 1000, 'backgroundColor': 'rgba(0,0,0,0.7)', 'padding': '10px', 'borderRadius': '10px'}),
     
     html.Div([
@@ -599,9 +600,10 @@ app.layout = html.Div([
             children=[
                 html.Div(id='expression-plots')  # Container for the expression plots
             ]
-        ),
+        )
     ])
 ], style={'padding': '20px', 'position': 'relative'})
+
 
 
 
