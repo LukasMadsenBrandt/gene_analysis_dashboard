@@ -501,6 +501,8 @@ layout_options = [
 # Initialize the Dash app
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 app.layout = html.Div([
+    dcc.Store(id='current-dataset', data=None),
+    dcc.Store(id='current-summarization-technique', data=None),
     dcc.Store(id='toggle-state', data=True),
     dcc.Store(id='df-store'),  # Store for the DataFrame
     html.Div([
@@ -555,6 +557,7 @@ app.layout = html.Div([
             value='dot',
             style={'backgroundColor': 'white', 'color': 'black', 'marginBottom': '20px'}
         ),
+        
         html.Label('Community Detection Method:', style={'color': 'white'}),
         dcc.Dropdown(
             id='community-detection-method-dropdown',
@@ -582,9 +585,8 @@ app.layout = html.Div([
         ], style={'maxHeight': '200px', 'overflowY': 'scroll'}),
         
         html.Div(id='node-edge-info', style={'marginTop': '20px', 'color': 'white'}),
-        html.Div(id='selections-output', style={'color': 'red'}),
-    ], style={'position': 'fixed', 'top': '10px', 'left': '10px', 'width': '300px', 'zIndex': 1000, 'backgroundColor': 'rgba(0,0,0,0.7)', 'padding': '10px', 'borderRadius': '10px'}),
-    
+        html.Div(id='selections-output', style={'color': 'red'})
+    ], style={'position': 'fixed', 'top': '10px', 'left': '10px', 'width': '300px', 'zIndex': 1000, 'backgroundColor': 'rgba(0,0,0,0.65)', 'padding': '10px', 'borderRadius': '10px'}),
     html.Div([
         dcc.Loading(
             id="loading-network-graph",
@@ -600,7 +602,7 @@ app.layout = html.Div([
                 html.Div(id='expression-plots')  # Container for the expression plots
             ]
         )
-    ])
+    ])    
 ], style={'padding': '20px', 'position': 'relative'})
 
 
@@ -656,7 +658,10 @@ app.index_string = '''
      Output('selections-output', 'children', allow_duplicate=True),
      Output('instructions', 'style'),
      Output('instructions', 'children'),
-     Output('df-store', 'data')],  # Store the DataFrame
+     Output('df-store', 'data'),  # Store the DataFrame
+     Output('current-dataset', 'data'),  # Store the current dataset
+     Output('current-summarization-technique', 'data'),  # Store the current summarization technique
+     Output('search-bar', 'value')],  # Clear the search bar
     [Input('send-button', 'n_clicks')],
     [State('dataset-dropdown', 'value'),
      State('summarization-technique-dropdown', 'value'),
@@ -666,10 +671,10 @@ app.index_string = '''
 )
 def send_selections(n_clicks, dataset, summarization_technique, community_detection_method, toggle_state):
     if n_clicks is None:
-        return [], [], "", {'display': 'block'}, 'Please select options and press "Send" to generate the graph.', None
+        return [], [], "", {'display': 'block'}, 'Please select options and press "Send" to generate the graph.', None, None, None, ''
 
     if not dataset or not summarization_technique:
-        return [], [], "", {'display': 'block'}, 'Both dataset and summarization technique must be selected.', None
+        return [], [], "", {'display': 'block'}, 'Both dataset and summarization technique must be selected.', None, None, None, ''
 
     global gencode_data, kutsche_data
 
@@ -700,7 +705,7 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
 
     if data_dict is None:
         debug_print(f"Error: data_dict is None for dataset {dataset}")
-        return [], [], "", {'display': 'block'}, 'Data dictionary is not initialized.', None
+        return [], [], "", {'display': 'block'}, 'Data dictionary is not initialized.', None, None, None, ''
 
     debug_print(f"data_dict initialized: {data_dict}")
 
@@ -719,13 +724,13 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
                 map_speciment_to_gene_file=os.path.join('Data', 'GENCODE', 'map_speciment_to_gene.csv')
             )
             data_human, df, day_map = filter_function(df_human)
-            #Remove rows with all 0's
+            # Remove rows with all 0's
             data_human = data_human.loc[(data_human != 0).any(axis=1)]
             data_dict[summarization_technique] = perform_gc_gencode(data_human, genes_file=os.path.join('Data', 'GENCODE', 'gene_names.txt'))
         elif dataset == 'kutsche':
             df_human = load_and_preprocess_kutsche(os.path.join('Data', 'Kutsche', 'genes.txt'))
             data_human, df, day_map = filter_function(df_human)
-            #Remove rows with all 0's
+            # Remove rows with all 0's
             data_human = data_human.loc[(data_human != 0).any(axis=1)]
             data_dict[summarization_technique] = perform_gc_kutsche(data_human)
         save_cache((data_dict[summarization_technique], data_human), cache_file)
@@ -748,7 +753,7 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
                     elif summarization_technique == 'median':
                         filter_function = filter_median_kutsche
                     data_human, df, day_map = filter_function(df_human)
-                    #Remove rows with all 0's
+                    # Remove rows with all 0's
                     data_human = data_human.loc[(data_human != 0).any(axis=1)]
                     data_dict[summarization_technique] = perform_gc_kutsche(data_human)
                     save_cache((data_dict[summarization_technique], data_human), cache_file)
@@ -770,7 +775,7 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
                         filter_function = filter_mean_gencode
                     elif summarization_technique == 'median':
                         filter_function = filter_median_gencode
-                    #Remove rows with all 0's
+                    # Remove rows with all 0's
                     data_human = data_human.loc[(data_human != 0).any(axis=1)]
                     data_human, df, day_map = filter_function(df_human)
                     data_dict[summarization_technique] = perform_gc_gencode(data_human, genes_file=os.path.join('Data', 'GENCODE', 'gene_names.txt'))
@@ -790,7 +795,7 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
         tf_genes_proximity = data_dict[summarization_technique]
 
     if tf_genes_proximity is None:
-        return [], [], "", {'display': 'none'}, 'No significant edges found.', None
+        return [], [], "", {'display': 'none'}, 'No significant edges found.', None, None, None, ''
 
     debug_print(f"Graph update: Dataset: {dataset}, Summarization Technique: {summarization_technique}, P-threshold: 0.05, Search: , Layout: dot")
     significant_edges = tf_genes_proximity if dataset == 'intersection' else collect_significant_edges_gencode(gencode_data[summarization_technique], p_value_threshold=0.05) if dataset == 'gencode' else collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=0.05)
@@ -806,9 +811,8 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
     community_values = [comm['value'] for comm in community_options]  # Select all communities
     debug_print("Community detection and color assignment complete.")
 
-
-    # Return the data to be stored in dcc.Store
-    return community_options, community_values, "", {'display': 'none'}, 'Please select options and press "Send" to generate the graph.', data_human.to_dict()
+    # Return the data to be stored in dcc.Store and clear search bar
+    return community_options, community_values, "", {'display': 'none'}, 'Please select options and press "Send" to generate the graph.', data_human.to_dict(), dataset, summarization_technique, ''
 
 
 @app.callback(
@@ -996,13 +1000,19 @@ def create_combined_plot(figures, gene_names, title):
      State('dataset-dropdown', 'value'),
      State('summarization-technique-dropdown', 'value'),
      State('p-threshold-slider', 'value'),
-     State('df-store', 'data')]  # Retrieve the DataFrame from store
+     State('df-store', 'data'),  # Retrieve the DataFrame from store
+     State('current-dataset', 'data'),
+     State('current-summarization-technique', 'data')]
 )
-def show_expression_plots(n_clicks, search_gene, dataset, summarization_technique, p_threshold, df_store):
+def show_expression_plots(n_clicks, search_gene, dataset, summarization_technique, p_threshold, df_store, current_dataset, current_summarization_technique):
     debug_print("Debug: Entered show_expression_plots")
     if n_clicks is None or not search_gene:
         debug_print("Debug: No clicks or no search gene provided")
         return ""
+    
+    if dataset != current_dataset or summarization_technique != current_summarization_technique:
+        return "Please press 'Send' after selecting a new dataset or summarization technique."
+
 
     if not dataset or not summarization_technique:
         debug_print("Debug: Dataset or summarization technique not selected")
@@ -1128,10 +1138,12 @@ def fig_to_plotly(fig):
      Input('p-threshold-slider', 'value'),
      Input('community-detection-method-dropdown', 'value'),
      Input('max-num-communities', 'value')],
-    [State('community-checklist', 'value')]
+    [State('community-checklist', 'value'),
+     State('current-dataset', 'data'),
+     State('current-summarization-technique', 'data')]
 )
-def update_show_plots_button(search_value, dataset, summarization_technique, p_threshold, community_detection_method, num_communities, selected_communities):
-    if not search_value:
+def update_show_plots_button(search_value, dataset, summarization_technique, p_threshold, community_detection_method, num_communities, selected_communities, current_dataset, current_summarization_technique):
+    if not search_value or dataset != current_dataset or summarization_technique != current_summarization_technique:
         return {'display': 'none'}
 
     global gencode_data, kutsche_data
