@@ -62,6 +62,29 @@ All the visualizations are based on the results of [Granger Causality Test](http
     sudo apt install graphviz
     ```
 
+
+#### Installing Git
+
+**On Windows:**
+
+1. Download Git from the official website: [Git for Windows](https://gitforwindows.org/).
+2. Run the installer and follow the installation steps.
+
+**On macOS:**
+
+1. Install Git using Homebrew:
+    ```sh
+    brew install git
+    ```
+
+**On Linux:**
+
+1. Use the package manager for your distribution to install Git. For example, on Ubuntu:
+    ```sh
+    sudo apt update
+    sudo apt install git
+    ```
+
 ### Setting Up the Project
 
 1. **Clone the Repository**:
