@@ -526,14 +526,13 @@ app.layout = html.Div([
             value='proximity',
             style={'backgroundColor': 'white', 'color': 'black', 'marginBottom': '20px'}
         ),
-        dbc.Button("Send", id="send-button", color="secondary", style={'marginTop': '10px', 'marginBottom': '20px'}),
+        dbc.Button("Send", id="send-button", color="primary", style={'marginTop': '10px', 'marginBottom': '20px'}),
         dcc.Loading(
             id="loading-send",
             type="default",
             children=[
                 html.Div(id='instructions', children='Please select options and press "Send" to generate the graph.', style={'marginTop': '20px', 'color': 'red'}),
-                html.Div(id='community-checklist-container-unique'),  # Ensure unique ID
-                html.Div(id='selections-output'),
+                html.Div(id='community-checklist-container-unique'),
             ]
         ),
         html.Label('P-value threshold:', style={'color': 'white'}),
@@ -583,7 +582,7 @@ app.layout = html.Div([
         ], style={'maxHeight': '200px', 'overflowY': 'scroll'}),
         
         html.Div(id='node-edge-info', style={'marginTop': '20px', 'color': 'white'}),
-        html.Div(id='selections-output-2', style={'marginTop': '20px', 'color': 'white'}),
+        html.Div(id='selections-output', style={'color': 'red'}),
     ], style={'position': 'fixed', 'top': '10px', 'left': '10px', 'width': '300px', 'zIndex': 1000, 'backgroundColor': 'rgba(0,0,0,0.7)', 'padding': '10px', 'borderRadius': '10px'}),
     
     html.Div([
