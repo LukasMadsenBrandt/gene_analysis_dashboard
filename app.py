@@ -186,6 +186,9 @@ def apply_community_detection(G, method='louvain', num_communities=None):
         if method == 'louvain':
             partition = community_louvain.best_partition(G.to_undirected(), random_state=42)
         elif method == 'girvan_newman':
+            if num_communities is None:
+                louvain_partition = community_louvain.best_partition(G.to_undirected(), random_state=42)
+                num_communities = len(set(louvain_partition.values()))
             partition = girvan_newman_community_detection(G, num_communities)
         else:
             raise ValueError(f"Unsupported community detection method: {method}")
@@ -253,12 +256,14 @@ def normalize(values, min_size=0.1, max_size=2.0):
         return [min_size for _ in values]
 
     return [min_size + (max_size - min_size) * (v - min_val) / range_val for v in values]
+
 # Create Graphviz DOT representation
 def create_graphviz_dot(G, partition, community_colors, highlight_node=None, layout="dot"):
-    dot = graphviz.Digraph(engine=layout)
+    dot = graphviz.Digraph(engine=layout, format='svg')
 
     dot.attr(tooltip='')
 
+    # If the graph is empty, return an empty graph
     if not G.nodes:
         return dot
 
@@ -568,9 +573,9 @@ app.layout = html.Div([
             value='louvain',
             style={'backgroundColor': 'white', 'color': 'black', 'marginBottom': '20px'}
         ),
-        html.Div(id='max-num-communities-container', children=[
+        html.Div(id='num-of-communities-container', children=[
             html.Label('Number of Communities:', style={'color': 'white', 'display': 'inline-block', 'marginRight': '10px'}),
-            dcc.Input(id='max-num-communities', type='number', value=2, min=1, step=1, style={'marginBottom': '20px', 'display': 'inline-block'}),
+            dcc.Input(id='num-of-communities', type='number', min=1, step=1, style={'marginBottom': '20px', 'display': 'inline-block'}),
         ], style={'display': 'none'}),
         dbc.Button("Toggle All", id="toggle-all-button", color="primary", style={'marginTop': '10px'}),
         html.Label('Select Communities:', style={'marginTop': '20px', 'color': 'white'}),
@@ -652,6 +657,7 @@ app.index_string = '''
     </body>
 </html>
 '''
+
 @app.callback(
     [Output('community-checklist', 'options'),
      Output('community-checklist', 'value', allow_duplicate=True),
@@ -661,7 +667,8 @@ app.index_string = '''
      Output('df-store', 'data'),  # Store the DataFrame
      Output('current-dataset', 'data'),  # Store the current dataset
      Output('current-summarization-technique', 'data'),  # Store the current summarization technique
-     Output('search-bar', 'value')],  # Clear the search bar
+     Output('search-bar', 'value'),  # Clear the search bar
+     Output('num-of-communities', 'value')],  # Set the number of communities
     [Input('send-button', 'n_clicks')],
     [State('dataset-dropdown', 'value'),
      State('summarization-technique-dropdown', 'value'),
@@ -671,10 +678,10 @@ app.index_string = '''
 )
 def send_selections(n_clicks, dataset, summarization_technique, community_detection_method, toggle_state):
     if n_clicks is None:
-        return [], [], "", {'display': 'block'}, 'Please select options and press "Send" to generate the graph.', None, None, None, ''
+        return [], [], "", {'display': 'block'}, 'Please select options and press "Send" to generate the graph.', None, None, None, '', 2
 
     if not dataset or not summarization_technique:
-        return [], [], "", {'display': 'block'}, 'Both dataset and summarization technique must be selected.', None, None, None, ''
+        return [], [], "", {'display': 'block'}, 'Both dataset and summarization technique must be selected.', None, None, None, '', 2
 
     global gencode_data, kutsche_data
 
@@ -705,7 +712,7 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
 
     if data_dict is None:
         debug_print(f"Error: data_dict is None for dataset {dataset}")
-        return [], [], "", {'display': 'block'}, 'Data dictionary is not initialized.', None, None, None, ''
+        return [], [], "", {'display': 'block'}, 'Data dictionary is not initialized.', None, None, None, '', 2
 
     debug_print(f"data_dict initialized: {data_dict}")
 
@@ -795,13 +802,17 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
         tf_genes_proximity = data_dict[summarization_technique]
 
     if tf_genes_proximity is None:
-        return [], [], "", {'display': 'none'}, 'No significant edges found.', None, None, None, ''
+        return [], [], "", {'display': 'none'}, 'No significant edges found.', None, None, None, '', 2
 
     debug_print(f"Graph update: Dataset: {dataset}, Summarization Technique: {summarization_technique}, P-threshold: 0.05, Search: , Layout: dot")
     significant_edges = tf_genes_proximity if dataset == 'intersection' else collect_significant_edges_gencode(gencode_data[summarization_technique], p_value_threshold=0.05) if dataset == 'gencode' else collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=0.05)
     debug_print(f"Computed intersection data for graph update, edges count: {len(significant_edges)}")
 
-    partition = cached_apply_community_detection(pickle.dumps(create_network(significant_edges)), community_detection_method, None)
+    G = create_network(significant_edges)
+    louvain_partition = community_louvain.best_partition(G.to_undirected(), random_state=42)
+    num_communities = len(set(louvain_partition.values()))
+
+    partition = cached_apply_community_detection(pickle.dumps(G), community_detection_method, num_communities if community_detection_method != 'louvain' else None)
     debug_print("Community detection successful.")
     partition_tuple = partition_to_tuple(partition)
     community_colors = cached_assign_colors(partition_tuple)
@@ -812,21 +823,22 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
     debug_print("Community detection and color assignment complete.")
 
     # Return the data to be stored in dcc.Store and clear search bar
-    return community_options, community_values, "", {'display': 'none'}, 'Please select options and press "Send" to generate the graph.', data_human.to_dict(), dataset, summarization_technique, ''
+    return community_options, community_values, "", {'display': 'none'}, 'Please select options and press "Send" to generate the graph.', data_human.to_dict(), dataset, summarization_technique, '', num_communities
 
 
 @app.callback(
     [Output('network-graph', 'srcDoc'),
      Output('selections-output', 'children'),
      Output('community-checklist', 'options', allow_duplicate=True),
-     Output('community-checklist', 'value', allow_duplicate=True)],
+     Output('community-checklist', 'value', allow_duplicate=True),
+     Output('num-of-communities', 'value', allow_duplicate=True)],
     [Input('p-threshold-slider', 'value'),
      Input('search-bar', 'value'),
      Input('layout-dropdown', 'value'),
      Input('community-checklist', 'value'),
      Input('toggle-all-button', 'n_clicks'),
      Input('community-detection-method-dropdown', 'value'),
-     Input('max-num-communities', 'value')],
+     Input('num-of-communities', 'value')],
     [State('dataset-dropdown', 'value'),
      State('summarization-technique-dropdown', 'value'),
      State('community-checklist', 'options'),
@@ -845,8 +857,8 @@ def handle_graph_update(p_threshold, search_value, layout, selected_communities,
     if not dataset or not summarization_technique:
         return "", "Both dataset and summarization technique must be selected.", [], []
 
-    # Always select all communities when p-threshold-slider is moved or max-num-communities is changed
-    if triggered_input in ['p-threshold-slider', 'max-num-communities']:
+    # Always select all communities when p-threshold-slider is moved or num-of-communities is changed
+    if triggered_input in ['p-threshold-slider', 'num-of-communities', 'community-detection-method-dropdown']:
         if dataset == 'intersection':
             kutsche_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold) if kutsche_data[summarization_technique] else []
             gencode_edges = collect_significant_edges_gencode(gencode_data[summarization_technique], p_value_threshold=p_threshold) if gencode_data[summarization_technique] else []
@@ -862,14 +874,14 @@ def handle_graph_update(p_threshold, search_value, layout, selected_communities,
             significant_edges = collect_significant_edges_gencode(gencode_data[summarization_technique], p_value_threshold=p_threshold) if dataset == 'gencode' and gencode_data[summarization_technique] else collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold) if kutsche_data[summarization_technique] else []
 
         if not significant_edges:
-            return "", "No significant edges found.", [], []
+            return "", "No significant edges found.", [], [], None
 
         G = create_network(significant_edges)
         if community_detection_method == 'girvan_newman':
-            communities_generator = girvan_newman(G)
-            max_communities_possible = sum(1 for _ in communities_generator) + 1
-            if num_communities is not None and num_communities > max_communities_possible:
-                return "", f"The selected number of communities ({num_communities}) is too high. The maximum number of communities that can be detected is {max_communities_possible}.", [], []
+            # Run Louvain first to determine the default number of communities
+            louvain_partition = community_louvain.best_partition(G.to_undirected(), random_state=42)
+            num_communities = len(set(louvain_partition.values()))
+        
         partition = cached_apply_community_detection(pickle.dumps(G), community_detection_method, num_communities if community_detection_method != 'louvain' else None)
         partition_tuple = partition_to_tuple(partition)
         community_colors = cached_assign_colors(partition_tuple)
@@ -879,7 +891,7 @@ def handle_graph_update(p_threshold, search_value, layout, selected_communities,
     elif triggered_input == 'toggle-all-button':
         all_communities, new_toggle_state = toggle_all_communities(community_options, toggle_state)
         selected_communities = all_communities if new_toggle_state else []
-        return dash.no_update, dash.no_update, community_options, selected_communities
+        return dash.no_update, dash.no_update, community_options, selected_communities, num_communities
 
     debug_print(f"Graph update: Dataset: {dataset}, Summarization Technique: {summarization_technique}, P-threshold: {p_threshold}, Search: {search_value}, Layout: {layout}")
 
@@ -903,25 +915,25 @@ def handle_graph_update(p_threshold, search_value, layout, selected_communities,
 
     if dot is None:
         if significant_edges:
-            return "", error_message, community_options, []
+            return "", error_message, community_options, [], num_communities
         else:
-            return "", "No significant edges found.", community_options, []
+            return "", "No significant edges found.", community_options, [], None
 
     if not selected_communities:
         message = "Please select at least one community to display the graph."
-        return "", message, community_options, []
+        return "", message, community_options, [], num_communities
 
     try:
         graph_svg = dot.pipe(format='svg').decode('utf-8')
         graph_html = html_template.format(graph=graph_svg)
-        return graph_html, error_message, community_options, selected_communities
+        return graph_html, error_message, community_options, selected_communities, num_communities
     except subprocess.CalledProcessError as e:
         error_message = f"Error generating graph: {e}"
-        return "", error_message, community_options, selected_communities
+        return "", error_message, community_options, selected_communities, num_communities
 
     except Exception as e:
         error_message = f"An unexpected error occurred: {e}"
-        return "", error_message, community_options, selected_communities
+        return "", error_message, community_options, selected_communities, num_communities
 
 
 @app.callback(
@@ -958,13 +970,14 @@ def toggle_all_communities(community_options, toggle_state):
     return new_selected_communities, new_toggle_state
 
 @app.callback(
-    Output('max-num-communities-container', 'style'),
+    Output('num-of-communities-container', 'style'),
     Input('community-detection-method-dropdown', 'value')
 )
 def show_hide_num_communities_input(method):
     if method in ['girvan_newman']:
         return {'display': 'block'}
     return {'display': 'none'}
+
 
 def create_combined_plot(figures, gene_names, title):
     # Determine the layout for subplots
@@ -1137,7 +1150,7 @@ def fig_to_plotly(fig):
      Input('summarization-technique-dropdown', 'value'),
      Input('p-threshold-slider', 'value'),
      Input('community-detection-method-dropdown', 'value'),
-     Input('max-num-communities', 'value')],
+     Input('num-of-communities', 'value')],
     [State('community-checklist', 'value'),
      State('current-dataset', 'data'),
      State('current-summarization-technique', 'data')]
