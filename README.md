@@ -121,10 +121,10 @@ All the visualizations are based on the results of [Granger Causality Test](http
 ```sh
 gene_analysis_dashboard/
 ├── app.py
-├── cache/
 ├── Data/
-│   ├── GENCODE/
-│   │   ├── GENCODE_Human
+│   ├── Benito/
+│   │   ├── Benito_Gorilla
+│   │   ├── Benito_Human
 │   │   ├── gene_id_to_gene_name.txt
 │   │   ├── gene_names.txt
 │   │   └── map_speciment_to_gene.csv
@@ -132,7 +132,7 @@ gene_analysis_dashboard/
 │       ├── genes.txt
 │       ├── Kutsche_Counts.txt
 │       └── search_genes.sh
-├── gene_analysis_gencode/
+├── gene_analysis_benito/
 │   ├── config.py
 │   ├── data_filtering.py
 │   ├── data_preprocessing.py
