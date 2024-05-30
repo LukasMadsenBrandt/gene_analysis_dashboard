@@ -130,6 +130,7 @@ gene_analysis_dashboard/
 │   │   └── map_speciment_to_gene.csv
 │   └── Kutsche/
 │       ├── genes.txt
+│       ├── gene_names.txt
 │       ├── Kutsche_Counts.txt
 │       └── search_genes.sh
 ├── gene_analysis_benito/
