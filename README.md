@@ -2,7 +2,8 @@
 
 ## Description
 
-This project provides a dashboard for gene analysis using data from the Benito-Kwiecinski and Kutsche datasets.
+This tool was developed while writing my Bachelor's Thesis in Computer Science.
+The tool is used for gene analysis using data from the Benito-Kwiecinski and Kutsche datasets.
 All the visualizations are based on the results of [Granger Causality Test](https://en.wikipedia.org/wiki/Granger_causality).
 
 ## Setup Instructions
