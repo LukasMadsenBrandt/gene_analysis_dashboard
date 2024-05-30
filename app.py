@@ -30,12 +30,12 @@ import warnings
 
 
 # Importing functions from both folders
-from gene_analysis_gencode.granger_causality import perform_granger_causality_tests_tf as perform_gc_gencode
-from gene_analysis_gencode.granger_causality import collect_significant_edges_tf as collect_significant_edges_gencode
-from gene_analysis_gencode.data_preprocessing import filter_data_proximity_based_weights as filter_proximity_gencode
-from gene_analysis_gencode.data_preprocessing import filter_data_arithmetic_mean as filter_mean_gencode
-from gene_analysis_gencode.data_preprocessing import filter_data_median as filter_median_gencode
-from gene_analysis_gencode.data_filtering import filter_data as mapper_gencode
+from gene_analysis_benito.granger_causality import perform_granger_causality_tests_tf as perform_gc_benito
+from gene_analysis_benito.granger_causality import collect_significant_edges_tf as collect_significant_edges_benito
+from gene_analysis_benito.data_preprocessing import filter_data_proximity_based_weights as filter_proximity_benito
+from gene_analysis_benito.data_preprocessing import filter_data_arithmetic_mean as filter_mean_benito
+from gene_analysis_benito.data_preprocessing import filter_data_median as filter_median_benito
+from gene_analysis_benito.data_filtering import filter_data as mapper_benito
 
 from gene_analysis_kutsche.granger_causality import perform_granger_causality_tests as perform_gc_kutsche
 from gene_analysis_kutsche.granger_causality import collect_significant_edges as collect_significant_edges_kutsche
@@ -114,13 +114,13 @@ def clear_directory(dir):
 def create_network(significant_edges):
     G = nx.DiGraph()
     for edge in significant_edges:
-        if len(edge) == 3:  # For gencode and kutsche datasets
+        if len(edge) == 3:  # For benito and kutsche datasets
             (source, lag), (target, _), p_value = edge
             G.add_edge(source, target, lag=lag, p_value=p_value)
         elif len(edge) == 4:  # For intersection dataset
-            (source, lag), (target, _), kutsche_p_value, gencode_p_value = edge
-            avg_p_value = (kutsche_p_value + gencode_p_value) / 2
-            G.add_edge(source, target, lag=lag, kutsche_p_value=kutsche_p_value, gencode_p_value=gencode_p_value, p_value=avg_p_value)
+            (source, lag), (target, _), kutsche_p_value, benito_p_value = edge
+            avg_p_value = (kutsche_p_value + benito_p_value) / 2
+            G.add_edge(source, target, lag=lag, kutsche_p_value=kutsche_p_value, benito_p_value=benito_p_value, p_value=avg_p_value)
     return G
 
 
@@ -136,12 +136,13 @@ def partition_to_tuple(partition):
 def tuple_to_partition(t):
     return dict(t)
 
+# Apply community detection to a graph
 @lru_cache(maxsize=1)
 def cached_apply_community_detection(graph_pickle, method, num_communities):
     G = pickle.loads(graph_pickle)  # Deserialize the graph
     return apply_community_detection(G, method, num_communities)
 
-
+# Apply Girvan-Newman community detection algorithm to a directed graph
 def girvan_newman_community_detection(G, num_communities=2):
     """
     Apply Girvan-Newman community detection algorithm to a directed graph.
@@ -206,9 +207,8 @@ def apply_community_detection(G, method='louvain', num_communities=None):
 
 
 
-    
+# Reduce the number of communities to the specified number
 def reduce_communities(partition, num_communities):
-
     community_counts = Counter(partition.values())
     most_common_communities = [community for community, _ in community_counts.most_common(num_communities)]
     
@@ -233,7 +233,7 @@ def assign_colors(partition):
     debug_print(f"Assigning colors to communities: {set(partition.values())}")
     cmap = plt.get_cmap('tab20')
     community_colors = {}
-    unique_communities = list(set(partition.values()))
+    unique_communities = sorted(set(partition.values()))  # Sort to maintain consistency
 
     for idx, community in enumerate(unique_communities):
         color = cmap(idx % cmap.N)
@@ -279,14 +279,14 @@ def create_graphviz_dot(G, partition, community_colors, highlight_node=None, lay
         out_edges_info = []
         for _, target, data in out_edges:
             kutsche_p_value = data.get('kutsche_p_value', None)
-            gencode_p_value = data.get('gencode_p_value', None)
-            if kutsche_p_value is not None and gencode_p_value is not None:
-                out_edges_info.append(f"{target}: ({kutsche_p_value:.6f})({gencode_p_value:.6f})")
+            benito_p_value = data.get('benito_p_value', None)
+            if kutsche_p_value is not None and benito_p_value is not None:
+                out_edges_info.append(f"{target}: ({kutsche_p_value:.6f})({benito_p_value:.6f})")
             else:
                 out_edges_info.append(f"{target}: ({data['p_value']:.6f})")
         
         out_edges_info = ", ".join(out_edges_info)
-        if any('kutsche_p_value' in data and 'gencode_p_value' in data for _, _, data in out_edges):
+        if any('kutsche_p_value' in data and 'benito_p_value' in data for _, _, data in out_edges):
             hover_text = html_escape.escape(
                 f'{node} may granger cause {G.out_degree(node)} gene(s), p-values are formatted in the following way: Gene: (Kutsche p-value)(Benito-Kwiecinski p-value) : \n{out_edges_info}'
             )
@@ -310,13 +310,13 @@ def create_graphviz_dot(G, partition, community_colors, highlight_node=None, lay
         lag = G[source][target]['lag']
         p_value = G[source][target]['p_value']
         kutsche_p_value = G[source][target].get('kutsche_p_value', None)
-        gencode_p_value = G[source][target].get('gencode_p_value', None)
+        benito_p_value = G[source][target].get('benito_p_value', None)
 
         weight = str(norm_p_values[idx])
         color_hex, _ = community_colors.get(partition.get(source), ("#d3d3d3", "gray"))
-        if kutsche_p_value is not None and gencode_p_value is not None:
+        if kutsche_p_value is not None and benito_p_value is not None:
             hover_text = html_escape.escape(
-                f'{source} may Granger Cause {target} at lag {lag} with a p-value of {kutsche_p_value:.6f}(Kutsche) and a p-value of {gencode_p_value:.6f}(Benito-Kwiecinski)'
+                f'{source} may Granger Cause {target} at lag {lag} with a p-value of {kutsche_p_value:.6f}(Kutsche) and a p-value of {benito_p_value:.6f}(Benito-Kwiecinski)'
             )
         else:
             hover_text = html_escape.escape(
@@ -333,17 +333,17 @@ def create_graphviz_dot(G, partition, community_colors, highlight_node=None, lay
 
 
 # Function to compare datasets and find intersections
-def compare_datasets(kutsche, gencode):
+def compare_datasets(kutsche, benito):
     dict1 = {(row['Gene1'], row['Gene2'], row['Lag']): row['P_Value'] for index, row in kutsche.iterrows()}
-    dict2 = {(row['Gene1'], row['Gene2'], row['Lag']): row['P_Value'] for index, row in gencode.iterrows()}
+    dict2 = {(row['Gene1'], row['Gene2'], row['Lag']): row['P_Value'] for index, row in benito.iterrows()}
 
     common_edges = []
     for key in dict1:
         if key in dict2:
             gene1, gene2, lag = key
             kutsche_p_value = dict1[key]
-            gencode_p_value = dict2[key]
-            common_edges.append(((gene1, lag), (gene2, '_'), kutsche_p_value, gencode_p_value))
+            benito_p_value = dict2[key]
+            common_edges.append(((gene1, lag), (gene2, '_'), kutsche_p_value, benito_p_value))
 
     return common_edges
 
@@ -495,7 +495,7 @@ html_template = """
 </html>
 """
 
-# Define layout options with descriptions
+# Define layout options
 layout_options = [
     {'label': 'DOT (Hierarchical)', 'value': 'dot', 'description': 'Hierarchical or layered drawings of directed graphs.'},
     {'label': 'FDP (Force-Directed Placement)', 'value': 'fdp', 'description': 'Force-Directed Placement.'},
@@ -505,6 +505,8 @@ layout_options = [
 
 # Initialize the Dash app
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
+
+# Define the layout of the app
 app.layout = html.Div([
     dcc.Store(id='current-dataset', data=None),
     dcc.Store(id='current-summarization-technique', data=None),
@@ -516,7 +518,7 @@ app.layout = html.Div([
         dcc.Dropdown(
             id='dataset-dropdown',
             options=[
-                {'label': 'Benito-Kwiecinski', 'value': 'gencode'},
+                {'label': 'Benito-Kwiecinski', 'value': 'benito'},
                 {'label': 'Kutsche', 'value': 'kutsche'},
                 {'label': 'Intersection', 'value': 'intersection'}
             ],
@@ -575,7 +577,7 @@ app.layout = html.Div([
         ),
         html.Div(id='num-of-communities-container', children=[
             html.Label('Number of Communities:', style={'color': 'white', 'display': 'inline-block', 'marginRight': '10px'}),
-            dcc.Input(id='num-of-communities', type='number', min=1, step=1, style={'marginBottom': '20px', 'display': 'inline-block'}),
+            dcc.Input(id='num-of-communities', type='number', min=1, step=1, max=20, style={'marginBottom': '20px', 'display': 'inline-block'}),
         ], style={'display': 'none'}),
         dbc.Button("Toggle All", id="toggle-all-button", color="primary", style={'marginTop': '10px'}),
         html.Label('Select Communities:', style={'marginTop': '20px', 'color': 'white'}),
@@ -658,6 +660,7 @@ app.index_string = '''
 </html>
 '''
 
+# Function that updates that recomputes or load the data from cache, whenever the user presses the "Send" button
 @app.callback(
     [Output('community-checklist', 'options'),
      Output('community-checklist', 'value', allow_duplicate=True),
@@ -683,7 +686,7 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
     if not dataset or not summarization_technique:
         return [], [], "", {'display': 'block'}, 'Both dataset and summarization technique must be selected.', None, None, None, '', 2
 
-    global gencode_data, kutsche_data
+    global benito_data, kutsche_data
 
     data_dict = None
     filter_function = None
@@ -691,14 +694,14 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
 
     debug_print(f"Button clicked. Dataset: {dataset}, Summarization Technique: {summarization_technique}")
 
-    if dataset == 'gencode':
+    if dataset == 'benito':
         if summarization_technique == 'proximity':
-            filter_function = filter_proximity_gencode
+            filter_function = filter_proximity_benito
         elif summarization_technique == 'mean':
-            filter_function = filter_mean_gencode
+            filter_function = filter_mean_benito
         elif summarization_technique == 'median':
-            filter_function = filter_median_gencode
-        data_dict = gencode_data
+            filter_function = filter_median_benito
+        data_dict = benito_data
     elif dataset == 'kutsche':
         if summarization_technique == 'proximity':
             filter_function = filter_proximity_kutsche
@@ -724,16 +727,16 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
         debug_print(f"Loaded {dataset} data ({summarization_technique}) from cache")
     else:
         debug_print(f"No cache found for {dataset} data ({summarization_technique}), computing...")
-        if dataset == 'gencode':
-            df_human = mapper_gencode(
-                datafile=os.path.join('Data', 'GENCODE', 'GENCODE_Human'),
-                mappingfile=os.path.join('Data', 'GENCODE', 'gene_id_to_gene_name.txt'),
-                map_speciment_to_gene_file=os.path.join('Data', 'GENCODE', 'map_speciment_to_gene.csv')
+        if dataset == 'benito':
+            df_human = mapper_benito(
+                datafile=os.path.join('Data', 'Benito', 'Benito_Human'),
+                mappingfile=os.path.join('Data', 'Benito', 'gene_id_to_gene_name.txt'),
+                map_speciment_to_gene_file=os.path.join('Data', 'Benito', 'map_speciment_to_gene.csv')
             )
             data_human, df, day_map = filter_function(df_human)
             # Remove rows with all 0's
             data_human = data_human.loc[(data_human != 0).any(axis=1)]
-            data_dict[summarization_technique] = perform_gc_gencode(data_human, genes_file=os.path.join('Data', 'GENCODE', 'gene_names.txt'))
+            data_dict[summarization_technique] = perform_gc_benito(data_human, genes_file=os.path.join('Data', 'Benito', 'gene_names.txt'))
         elif dataset == 'kutsche':
             df_human = load_and_preprocess_kutsche(os.path.join('Data', 'Kutsche', 'genes.txt'))
             data_human, df, day_map = filter_function(df_human)
@@ -744,7 +747,7 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
         debug_print(f"Computed and saved {dataset} data ({summarization_technique}) to cache")
 
     if dataset == 'intersection':
-        for ds in ['kutsche', 'gencode']:
+        for ds in ['kutsche', 'benito']:
             if ds == 'kutsche':
                 data_dict = kutsche_data
                 cache_file = get_cache_filename('kutsche', summarization_technique)
@@ -764,40 +767,40 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
                     data_human = data_human.loc[(data_human != 0).any(axis=1)]
                     data_dict[summarization_technique] = perform_gc_kutsche(data_human)
                     save_cache((data_dict[summarization_technique], data_human), cache_file)
-            elif ds == 'gencode':
-                data_dict = gencode_data
-                cache_file = get_cache_filename('gencode', summarization_technique)
+            elif ds == 'benito':
+                data_dict = benito_data
+                cache_file = get_cache_filename('benito', summarization_technique)
                 cache_content = load_cache(cache_file)
                 if cache_content is not None:
                     data_dict[summarization_technique], data_human = cache_content
                 else:
-                    df_human = mapper_gencode(
-                        datafile=os.path.join('Data', 'GENCODE', 'GENCODE_Human'),
-                        mappingfile=os.path.join('Data', 'GENCODE', 'gene_id_to_gene_name.txt'),
-                        map_speciment_to_gene_file=os.path.join('Data', 'GENCODE', 'map_speciment_to_gene.csv')
+                    df_human = mapper_benito(
+                        datafile=os.path.join('Data', 'Benito', 'Benito_Human'),
+                        mappingfile=os.path.join('Data', 'Benito', 'gene_id_to_gene_name.txt'),
+                        map_speciment_to_gene_file=os.path.join('Data', 'Benito', 'map_speciment_to_gene.csv')
                     )
                     if summarization_technique == 'proximity':
-                        filter_function = filter_proximity_gencode
+                        filter_function = filter_proximity_benito
                     elif summarization_technique == 'mean':
-                        filter_function = filter_mean_gencode
+                        filter_function = filter_mean_benito
                     elif summarization_technique == 'median':
-                        filter_function = filter_median_gencode
+                        filter_function = filter_median_benito
                     # Remove rows with all 0's
                     data_human = data_human.loc[(data_human != 0).any(axis=1)]
                     data_human, df, day_map = filter_function(df_human)
-                    data_dict[summarization_technique] = perform_gc_gencode(data_human, genes_file=os.path.join('Data', 'GENCODE', 'gene_names.txt'))
+                    data_dict[summarization_technique] = perform_gc_benito(data_human, genes_file=os.path.join('Data', 'Benito', 'gene_names.txt'))
                     save_cache((data_dict[summarization_technique], data_human), cache_file)
 
         kutsche_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=0.05)
-        gencode_edges = collect_significant_edges_gencode(gencode_data[summarization_technique], p_value_threshold=0.05)
+        benito_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=0.05)
 
         kutsche_edges = [(edge[0][0], edge[1][0], edge[0][1], edge[2]) for edge in kutsche_edges]
-        gencode_edges = [(edge[0][0], edge[1][0], edge[0][1], edge[2]) for edge in gencode_edges]
+        benito_edges = [(edge[0][0], edge[1][0], edge[0][1], edge[2]) for edge in benito_edges]
 
         kutsche_df = pd.DataFrame(kutsche_edges, columns=['Gene1', 'Gene2', 'Lag', 'P_Value'])
-        gencode_df = pd.DataFrame(gencode_edges, columns=['Gene1', 'Gene2', 'Lag', 'P_Value'])
+        benito_df = pd.DataFrame(benito_edges, columns=['Gene1', 'Gene2', 'Lag', 'P_Value'])
 
-        tf_genes_proximity = compare_datasets(kutsche_df, gencode_df)
+        tf_genes_proximity = compare_datasets(kutsche_df, benito_df)
     else:
         tf_genes_proximity = data_dict[summarization_technique]
 
@@ -805,7 +808,7 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
         return [], [], "", {'display': 'none'}, 'No significant edges found.', None, None, None, '', 2
 
     debug_print(f"Graph update: Dataset: {dataset}, Summarization Technique: {summarization_technique}, P-threshold: 0.05, Search: , Layout: dot")
-    significant_edges = tf_genes_proximity if dataset == 'intersection' else collect_significant_edges_gencode(gencode_data[summarization_technique], p_value_threshold=0.05) if dataset == 'gencode' else collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=0.05)
+    significant_edges = tf_genes_proximity if dataset == 'intersection' else collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=0.05) if dataset == 'benito' else collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=0.05)
     debug_print(f"Computed intersection data for graph update, edges count: {len(significant_edges)}")
 
     G = create_network(significant_edges)
@@ -825,7 +828,7 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
     # Return the data to be stored in dcc.Store and clear search bar
     return community_options, community_values, "", {'display': 'none'}, 'Please select options and press "Send" to generate the graph.', data_human.to_dict(), dataset, summarization_technique, '', num_communities
 
-
+# The function that handles the graph updates, when various things are changed by the user, like p-threshold, search bar, layout, etc.
 @app.callback(
     [Output('network-graph', 'srcDoc'),
      Output('selections-output', 'children'),
@@ -846,7 +849,7 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
     prevent_initial_call=True
 )
 def handle_graph_update(p_threshold, search_value, layout, selected_communities, n_clicks, community_detection_method, num_communities, dataset, summarization_technique, community_options, toggle_state):
-    global gencode_data, kutsche_data
+    global benito_data, kutsche_data
 
     ctx = dash.callback_context
 
@@ -855,33 +858,33 @@ def handle_graph_update(p_threshold, search_value, layout, selected_communities,
 
     # Validate dataset and summarization technique selection
     if not dataset or not summarization_technique:
-        return "", "Both dataset and summarization technique must be selected.", [], []
+        return "", "Both dataset and summarization technique must be selected.", [], [], None
 
     # Always select all communities when p-threshold-slider is moved or num-of-communities is changed
     if triggered_input in ['p-threshold-slider', 'num-of-communities', 'community-detection-method-dropdown']:
         if dataset == 'intersection':
             kutsche_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold) if kutsche_data[summarization_technique] else []
-            gencode_edges = collect_significant_edges_gencode(gencode_data[summarization_technique], p_value_threshold=p_threshold) if gencode_data[summarization_technique] else []
+            benito_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=p_threshold) if benito_data[summarization_technique] else []
 
             kutsche_edges = [(edge[0][0], edge[1][0], edge[0][1], edge[2]) for edge in kutsche_edges]
-            gencode_edges = [(edge[0][0], edge[1][0], edge[0][1], edge[2]) for edge in gencode_edges]
+            benito_edges = [(edge[0][0], edge[1][0], edge[0][1], edge[2]) for edge in benito_edges]
 
             kutsche_df = pd.DataFrame(kutsche_edges, columns=['Gene1', 'Gene2', 'Lag', 'P_Value'])
-            gencode_df = pd.DataFrame(gencode_edges, columns=['Gene1', 'Gene2', 'Lag', 'P_Value'])
+            benito_df = pd.DataFrame(benito_edges, columns=['Gene1', 'Gene2', 'Lag', 'P_Value'])
 
-            significant_edges = compare_datasets(kutsche_df, gencode_df)
+            significant_edges = compare_datasets(kutsche_df, benito_df)
         else:
-            significant_edges = collect_significant_edges_gencode(gencode_data[summarization_technique], p_value_threshold=p_threshold) if dataset == 'gencode' and gencode_data[summarization_technique] else collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold) if kutsche_data[summarization_technique] else []
+            significant_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=p_threshold) if dataset == 'benito' and benito_data[summarization_technique] else collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold) if kutsche_data[summarization_technique] else []
 
         if not significant_edges:
             return "", "No significant edges found.", [], [], None
-
         G = create_network(significant_edges)
-        if community_detection_method == 'girvan_newman':
-            # Run Louvain first to determine the default number of communities
-            louvain_partition = community_louvain.best_partition(G.to_undirected(), random_state=42)
-            num_communities = len(set(louvain_partition.values()))
-        
+        if triggered_input != 'num-of-communities':
+            if community_detection_method == 'girvan_newman':
+                # Run Louvain first to determine the default number of communities
+                louvain_partition = community_louvain.best_partition(G.to_undirected(), random_state=42)
+                num_communities = len(set(louvain_partition.values()))
+            
         partition = cached_apply_community_detection(pickle.dumps(G), community_detection_method, num_communities if community_detection_method != 'louvain' else None)
         partition_tuple = partition_to_tuple(partition)
         community_colors = cached_assign_colors(partition_tuple)
@@ -897,18 +900,18 @@ def handle_graph_update(p_threshold, search_value, layout, selected_communities,
 
     if dataset == 'intersection':
         kutsche_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold) if kutsche_data[summarization_technique] else []
-        gencode_edges = collect_significant_edges_gencode(gencode_data[summarization_technique], p_value_threshold=p_threshold) if gencode_data[summarization_technique] else []
+        benito_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=p_threshold) if benito_data[summarization_technique] else []
 
         kutsche_edges = [(edge[0][0], edge[1][0], edge[0][1], edge[2]) for edge in kutsche_edges]
-        gencode_edges = [(edge[0][0], edge[1][0], edge[0][1], edge[2]) for edge in gencode_edges]
+        benito_edges = [(edge[0][0], edge[1][0], edge[0][1], edge[2]) for edge in benito_edges]
 
         kutsche_df = pd.DataFrame(kutsche_edges, columns=['Gene1', 'Gene2', 'Lag', 'P_Value'])
-        gencode_df = pd.DataFrame(gencode_edges, columns=['Gene1', 'Gene2', 'Lag', 'P_Value'])
+        benito_df = pd.DataFrame(benito_edges, columns=['Gene1', 'Gene2', 'Lag', 'P_Value'])
 
-        significant_edges = compare_datasets(kutsche_df, gencode_df)
+        significant_edges = compare_datasets(kutsche_df, benito_df)
         debug_print(f"Computed intersection data for graph update, edges count: {len(significant_edges)}")
     else:
-        significant_edges = collect_significant_edges_gencode(gencode_data[summarization_technique], p_value_threshold=p_threshold) if dataset == 'gencode' and gencode_data[summarization_technique] else collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold) if kutsche_data[summarization_technique] else []
+        significant_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=p_threshold) if dataset == 'benito' and benito_data[summarization_technique] else collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold) if kutsche_data[summarization_technique] else []
         debug_print(f"Computed significant edges for {dataset} data, edges count: {len(significant_edges)}")
 
     dot, community_options, error_message = update_graph_function(significant_edges, selected_communities, search_value, layout, community_detection_method=community_detection_method, num_communities=num_communities)
@@ -954,7 +957,7 @@ def toggle_all_communities_callback(n_clicks, community_options, selected_commun
 
     return all_communities, new_toggle_state
 
-
+# Toggles all communities in the checklist
 def toggle_all_communities(community_options, toggle_state):
     all_communities = [option['value'] for option in community_options]
 
@@ -1031,7 +1034,7 @@ def show_expression_plots(n_clicks, search_gene, dataset, summarization_techniqu
         debug_print("Debug: Dataset or summarization technique not selected")
         return "Please select both dataset and summarization technique."
 
-    global gencode_data, kutsche_data
+    global benito_data, kutsche_data
 
     if dataset == 'intersection':
         debug_print("Debug: Intersection dataset selected, not supported")
@@ -1040,7 +1043,7 @@ def show_expression_plots(n_clicks, search_gene, dataset, summarization_techniqu
     # Convert the stored data back to DataFrame
     df = pd.DataFrame(df_store)
 
-    data_dict = gencode_data if dataset == 'gencode' else kutsche_data
+    data_dict = benito_data if dataset == 'benito' else kutsche_data
     data = data_dict.get(summarization_technique)
 
     if data is None:
@@ -1048,7 +1051,7 @@ def show_expression_plots(n_clicks, search_gene, dataset, summarization_techniqu
         return f"No data available for the selected dataset ({dataset}) and summarization technique ({summarization_technique})."
 
     # Retrieve the significant edges
-    significant_edges = collect_significant_edges_gencode(data, p_value_threshold=p_threshold) if dataset == 'gencode' else collect_significant_edges_kutsche(data, p_value_threshold=p_threshold)
+    significant_edges = collect_significant_edges_benito(data, p_value_threshold=p_threshold) if dataset == 'benito' else collect_significant_edges_kutsche(data, p_value_threshold=p_threshold)
     debug_print(f"Debug: Retrieved {len(significant_edges)} significant edges")
 
     # Find genes influenced by the searched gene
@@ -1159,19 +1162,19 @@ def update_show_plots_button(search_value, dataset, summarization_technique, p_t
     if not search_value or dataset != current_dataset or summarization_technique != current_summarization_technique:
         return {'display': 'none'}
 
-    global gencode_data, kutsche_data
+    global benito_data, kutsche_data
 
     if dataset == 'intersection':
         return {'display': 'none'}
 
-    data_dict = gencode_data if dataset == 'gencode' else kutsche_data
+    data_dict = benito_data if dataset == 'benito' else kutsche_data
     data = data_dict.get(summarization_technique)
 
     if data is None:
         return {'display': 'none'}
 
     # Retrieve the significant edges
-    significant_edges = collect_significant_edges_gencode(data, p_value_threshold=p_threshold) if dataset == 'gencode' else collect_significant_edges_kutsche(data, p_value_threshold=p_threshold)
+    significant_edges = collect_significant_edges_benito(data, p_value_threshold=p_threshold) if dataset == 'benito' else collect_significant_edges_kutsche(data, p_value_threshold=p_threshold)
 
     # Create the graph and apply community detection
     G = create_network(significant_edges)
@@ -1191,12 +1194,19 @@ def update_show_plots_button(search_value, dataset, summarization_technique, p_t
         return {'display': 'none'}
 
 
-
-
 # Run the app
 if __name__ == '__main__':
-    gencode_data = {'proximity': None, 'mean': None, 'median': None}
+    # Change working directory to the directory of the script
+    abspath = os.path.abspath(__file__)
+    dname = os.path.dirname(abspath)
+    os.chdir(dname)
+    
+    # Initialize data dictionaries for cache
+    benito_data = {'proximity': None, 'mean': None, 'median': None}
     kutsche_data = {'proximity': None, 'mean': None, 'median': None}
+
+    # Clear cache and plots directories
     clear_directory(cache_dir)
     clear_directory(plots_dir)
+
     app.run_server(debug=True)
