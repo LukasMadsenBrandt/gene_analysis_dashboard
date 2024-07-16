@@ -47,7 +47,7 @@ from gene_analysis_kutsche.data_filtering import filter_data_median as filter_me
 warnings.filterwarnings("ignore", message="'linear' x-axis tick spacing not even")
 
 
-debugging = True
+debugging = False
 # Create cache directory if it doesn't exist
 
 cache_dir = os.path.join(os.getcwd(), 'cache')
