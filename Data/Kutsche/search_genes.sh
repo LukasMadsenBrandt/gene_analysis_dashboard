@@ -1,13 +1,15 @@
 #!/bin/bash
 
 # The file with gene names
-gene_list="gene_names.txt"
+gene_list="unique_genes.txt"
 
 # The file to search through
 data_file="Kutsche_Counts.txt"
 
 # The file to append results to
-output_file="genes.txt"
+output_file="genes_all.txt"
+
+declare -a ARRAY
 
 # Check if the gene list and data files exist
 if [ ! -f "$gene_list" ]; then
@@ -25,11 +27,19 @@ head -n 1 "$data_file" > "$output_file"
 
 # Read each gene from the gene list file
 while IFS= read -r gene; do
-    if ! grep -P "\b$gene\b(?![\-])" "$data_file" >> "$output_file"; then
-        echo "No matches found for gene: $gene"
+    if ! grep -P "\b^$gene\b(?![\-])" "$data_file" >> "$output_file"; then
+        echo "$gene: Not found"
+        # Add gene to list to later print
+        ARRAY+=("$gene")
     else
-        echo "Matches found for gene: $gene and appended to $output_file"
+        echo "$gene: Found"
     fi
 done < "$gene_list"
 
 echo "Search complete. Results appended to $output_file."
+
+echo "Genes not found:"
+for i in "${ARRAY[@]}"
+do
+    echo "$i"
+done

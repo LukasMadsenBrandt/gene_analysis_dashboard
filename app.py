@@ -47,7 +47,7 @@ from gene_analysis_kutsche.data_filtering import filter_data_median as filter_me
 warnings.filterwarnings("ignore", message="'linear' x-axis tick spacing not even")
 
 
-debugging = False
+debugging = True
 # Create cache directory if it doesn't exist
 
 cache_dir = os.path.join(os.getcwd(), 'cache')
@@ -518,8 +518,9 @@ app.layout = html.Div([
         dcc.Dropdown(
             id='dataset-dropdown',
             options=[
-                {'label': 'Benito-Kwiecinski', 'value': 'benito'},
-                {'label': 'Kutsche', 'value': 'kutsche'},
+                {'label': '47-Benito-Kwiecinski', 'value': 'benito'},
+                {'label': '47-Kutsche', 'value': 'kutsche'},
+                {'label': 'Kutsche', 'value': 'large_kutsche' },
                 {'label': 'Intersection', 'value': 'intersection'}
             ],
             style={'backgroundColor': 'white', 'color': 'black', 'marginBottom': '20px'}
@@ -710,6 +711,8 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
         elif summarization_technique == 'median':
             filter_function = filter_median_kutsche
         data_dict = kutsche_data
+    elif dataset == 'large_kutsche':
+        data_dict = {'proximity': None, 'mean': None, 'median': None}
     elif dataset == 'intersection':
         data_dict = {'proximity': None, 'mean': None, 'median': None}
 
@@ -801,6 +804,8 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
         benito_df = pd.DataFrame(benito_edges, columns=['Gene1', 'Gene2', 'Lag', 'P_Value'])
 
         tf_genes_proximity = compare_datasets(kutsche_df, benito_df)
+    
+        
     else:
         tf_genes_proximity = data_dict[summarization_technique]
 
@@ -808,7 +813,19 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
         return [], [], "", {'display': 'none'}, 'No significant edges found.', None, None, None, '', 2
 
     debug_print(f"Graph update: Dataset: {dataset}, Summarization Technique: {summarization_technique}, P-threshold: 0.05, Search: , Layout: dot")
-    significant_edges = tf_genes_proximity if dataset == 'intersection' else collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=0.05) if dataset == 'benito' else collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=0.05)
+    if dataset == 'intersection':
+        significant_edges = tf_genes_proximity
+    elif dataset == 'benito':
+        significant_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=0.05)
+    elif dataset == 'kutsche':
+        significant_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=0.05)
+    elif dataset == 'large_kutsche':
+        not_needed = None # Placeholder, as we read this from the file
+        significant_edges = collect_significant_edges_kutsche(not_needed, p_value_threshold=0.05, file=True, filepath = "granger_causality_results.csv")
+
+    else:
+        significant_edges = [] # or any default value you prefer
+
     debug_print(f"Computed intersection data for graph update, edges count: {len(significant_edges)}")
 
     G = create_network(significant_edges)
@@ -873,9 +890,16 @@ def handle_graph_update(p_threshold, search_value, layout, selected_communities,
             benito_df = pd.DataFrame(benito_edges, columns=['Gene1', 'Gene2', 'Lag', 'P_Value'])
 
             significant_edges = compare_datasets(kutsche_df, benito_df)
+        elif dataset == 'benito':
+            significant_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=p_threshold)
+        elif dataset == 'kutsche':
+            significant_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold)
+        elif dataset == 'large_kutsche':
+            not_needed = None # Placeholder, as we read this from the file
+            significant_edges = collect_significant_edges_kutsche(not_needed, p_value_threshold=p_threshold, file=True, filepath = "granger_causality_results.csv")
+    
         else:
-            significant_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=p_threshold) if dataset == 'benito' and benito_data[summarization_technique] else collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold) if kutsche_data[summarization_technique] else []
-
+            significant_edges = [] # or any default value you prefer
         if not significant_edges:
             return "", "No significant edges found.", [], [], None
         G = create_network(significant_edges)
@@ -910,8 +934,17 @@ def handle_graph_update(p_threshold, search_value, layout, selected_communities,
 
         significant_edges = compare_datasets(kutsche_df, benito_df)
         debug_print(f"Computed intersection data for graph update, edges count: {len(significant_edges)}")
+    
+    elif dataset == 'benito':
+        significant_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=p_threshold)
+    elif dataset == 'kutsche':
+        significant_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold)
+    elif dataset == 'large_kutsche':
+        not_needed = None # Placeholder, as we read this from the file
+        significant_edges = collect_significant_edges_kutsche(not_needed, p_value_threshold=p_threshold, file=True, filepath = "granger_causality_results.csv")
+
     else:
-        significant_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=p_threshold) if dataset == 'benito' and benito_data[summarization_technique] else collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold) if kutsche_data[summarization_technique] else []
+        significant_edges = []  # or any default value you prefer
         debug_print(f"Computed significant edges for {dataset} data, edges count: {len(significant_edges)}")
 
     dot, community_options, error_message = update_graph_function(significant_edges, selected_communities, search_value, layout, community_detection_method=community_detection_method, num_communities=num_communities)
@@ -1051,7 +1084,16 @@ def show_expression_plots(n_clicks, search_gene, dataset, summarization_techniqu
         return f"No data available for the selected dataset ({dataset}) and summarization technique ({summarization_technique})."
 
     # Retrieve the significant edges
-    significant_edges = collect_significant_edges_benito(data, p_value_threshold=p_threshold) if dataset == 'benito' else collect_significant_edges_kutsche(data, p_value_threshold=p_threshold)
+    if dataset == 'benito':
+        significant_edges = collect_significant_edges_benito(data, p_value_threshold=0.05)
+    elif dataset == 'kutsche':
+        significant_edges = collect_significant_edges_kutsche(data, p_value_threshold=0.05)
+    elif dataset == 'large_kutsche':
+        not_needed = None # Placeholder, as we read this from the file
+        significant_edges = collect_significant_edges_kutsche(not_needed, p_value_threshold=0.05, file=True, filepath = "granger_causality_results.csv")
+
+    else:
+        significant_edges = []  # or any default value you prefer
     debug_print(f"Debug: Retrieved {len(significant_edges)} significant edges")
 
     # Find genes influenced by the searched gene
@@ -1174,8 +1216,16 @@ def update_show_plots_button(search_value, dataset, summarization_technique, p_t
         return {'display': 'none'}
 
     # Retrieve the significant edges
-    significant_edges = collect_significant_edges_benito(data, p_value_threshold=p_threshold) if dataset == 'benito' else collect_significant_edges_kutsche(data, p_value_threshold=p_threshold)
+    if dataset == 'benito':
+        significant_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=p_threshold)
+    elif dataset == 'kutsche':
+        significant_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold)
+    elif dataset == 'large_kutsche':
+        not_needed = None # Placeholder, as we read this from the file
+        significant_edges = collect_significant_edges_kutsche(not_needed, p_value_threshold=p_threshold, file=True, filepath = "granger_causality_results.csv")
 
+    else:
+        significant_edges = []  # or any default value you prefer
     # Create the graph and apply community detection
     G = create_network(significant_edges)
     graph_pickle = pickle.dumps(G)
