@@ -126,3 +126,42 @@ def save_results_to_csv(gc_results, output_file):
                     f.write(f"{gene1},{gene2},{lag},{p_value}\n")
                 else:
                     f.write(f"{gene1},{gene2},{lag},NaN\n")
+
+
+
+import tempfile
+
+def filter_gene_pairs(gene_list, filepath):
+    """
+    Filter gene pairs based on the presence of genes from a given list and save the results to a temporary CSV file.
+
+    Args:
+    gene_list (list): List of gene names to filter by.
+    filepath (str): Path to the CSV file containing gene pairs.
+
+    Returns:
+    str: The path to the temporary CSV file containing the filtered gene pairs.
+    """
+    # Create a temporary file to store the filtered results
+    temp_file = tempfile.NamedTemporaryFile(delete=False, mode='w', newline='')
+
+    with open(filepath, 'r') as file:
+        reader = csv.DictReader(file)
+        fieldnames = reader.fieldnames
+
+        # Write to the temporary file
+        with temp_file as tmpfile:
+            writer = csv.DictWriter(tmpfile, fieldnames=fieldnames)
+            writer.writeheader()
+            
+            # Iterate over each row in the CSV
+            for row in reader:
+                gene1 = row['gene1']
+                gene2 = row['gene2']
+                
+                # Check if either gene1 or gene2 is in the list of genes provided
+                if gene_list is None or gene1 in gene_list or gene2 in gene_list:
+                    # Write the row to the temporary file if a match is found
+                    writer.writerow(row)
+
+    return temp_file.name
