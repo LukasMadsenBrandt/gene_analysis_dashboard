@@ -47,7 +47,8 @@ from gene_analysis_kutsche.data_filtering import filter_data_median as filter_me
 
 warnings.filterwarnings("ignore", message="'linear' x-axis tick spacing not even")
 
-
+pvalue_global = 0.000375
+genelist_global = ['ZEB2']
 debugging = True
 # Create cache directory if it doesn't exist
 
@@ -496,6 +497,7 @@ html_template = """
 </html>
 """
 
+
 # Define layout options
 layout_options = [
     {'label': 'DOT (Hierarchical)', 'value': 'dot', 'description': 'Hierarchical or layered drawings of directed graphs.'},
@@ -594,7 +596,8 @@ app.layout = html.Div([
         ], style={'maxHeight': '200px', 'overflowY': 'scroll'}),
         
         html.Div(id='node-edge-info', style={'marginTop': '20px', 'color': 'white'}),
-        html.Div(id='selections-output', style={'color': 'red'})
+        html.Div(id='selections-output', style={'color': 'red'}),
+        dbc.Button("Export Graph as HTML", id="export-html-button", color="success", style={'marginTop': '20px'}),
     ], style={'position': 'fixed', 'top': '10px', 'left': '10px', 'width': '300px', 'zIndex': 1000, 'backgroundColor': 'rgba(0,0,0,0.65)', 'padding': '10px', 'borderRadius': '10px'}),
     html.Div([
         dcc.Loading(
@@ -610,11 +613,10 @@ app.layout = html.Div([
             children=[
                 html.Div(id='expression-plots')  # Container for the expression plots
             ]
-        )
+        ),
+        dcc.Download(id='download-graph-html')  # Add Download component
     ])    
 ], style={'padding': '20px', 'position': 'relative'})
-
-
 
 
 # Apply custom CSS styles
@@ -795,8 +797,8 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
                     data_dict[summarization_technique] = perform_gc_benito(data_human, genes_file=os.path.join('Data', 'Benito', 'gene_names.txt'))
                     save_cache((data_dict[summarization_technique], data_human), cache_file)
 
-        kutsche_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=0.05)
-        benito_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=0.05)
+        kutsche_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=pvalue_global)
+        benito_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=pvalue_global)
 
         kutsche_edges = [(edge[0][0], edge[1][0], edge[0][1], edge[2]) for edge in kutsche_edges]
         benito_edges = [(edge[0][0], edge[1][0], edge[0][1], edge[2]) for edge in benito_edges]
@@ -818,13 +820,13 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
         significant_edges = tf_genes_proximity
     elif dataset == 'benito':
         debug_print(f"Filtered pairs: {benito_data[summarization_technique]}")
-        significant_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=0.05)
+        significant_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=pvalue_global)
     elif dataset == 'kutsche':
-        significant_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=0.05)
+        significant_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=pvalue_global)
     elif dataset == 'large_kutsche':
         not_needed = None # Placeholder, as we read this from the file
-        filtered_pairs = filter_gene_pairs_kutsche(["ZEB2"],filepath = "granger_causality_results.csv")
-        significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=0.05, file=True, filepath = filtered_pairs)
+        filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=pvalue_global, gene_list=genelist_global)
+        significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=pvalue_global, file=True, filepath = filtered_pairs)
 
     else:
         significant_edges = [] # or any default value you prefer
@@ -872,6 +874,9 @@ def handle_graph_update(p_threshold, search_value, layout, selected_communities,
     global benito_data, kutsche_data
 
     ctx = dash.callback_context
+    if dataset == 'large_kutsche':
+        p_threshold = 0.000375
+        not_needed = None
 
     # Determine the triggered input
     triggered_input = ctx.triggered[0]['prop_id'].split('.')[0]
@@ -899,7 +904,7 @@ def handle_graph_update(p_threshold, search_value, layout, selected_communities,
             significant_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold)
         elif dataset == 'large_kutsche':
             not_needed = None # Placeholder, as we read this from the file
-            filtered_pairs = filter_gene_pairs_kutsche(["ZEB2"],filepath = "granger_causality_results.csv")
+            filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=pvalue_global, gene_list=genelist_global)
             significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs)
         else:
             significant_edges = [] # or any default value you prefer
@@ -944,7 +949,7 @@ def handle_graph_update(p_threshold, search_value, layout, selected_communities,
         significant_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold)
     elif dataset == 'large_kutsche':
         not_needed = None # Placeholder, as we read this from the file
-        filtered_pairs = filter_gene_pairs_kutsche(["ZEB2"],filepath = "granger_causality_results.csv")
+        filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=pvalue_global, starting_genes=genelist_global)
         significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs)
     else:
         significant_edges = []  # or any default value you prefer
@@ -1045,6 +1050,7 @@ def create_combined_plot(figures, gene_names, title):
 
     return subplot_fig
 
+
 @app.callback(
     Output('expression-plots', 'children'),
     [Input('show-plots-button', 'n_clicks')],
@@ -1088,12 +1094,12 @@ def show_expression_plots(n_clicks, search_gene, dataset, summarization_techniqu
 
     # Retrieve the significant edges
     if dataset == 'benito':
-        significant_edges = collect_significant_edges_benito(data, p_value_threshold=0.05)
+        significant_edges = collect_significant_edges_benito(data, p_value_threshold=pvalue_global)
     elif dataset == 'kutsche':
-        significant_edges = collect_significant_edges_kutsche(data, p_value_threshold=0.05)
+        significant_edges = collect_significant_edges_kutsche(data, p_value_threshold=pvalue_global)
     elif dataset == 'large_kutsche':
         not_needed = None # Placeholder, as we read this from the file
-        filtered_pairs = filter_gene_pairs_kutsche(["ZEB2"],filepath = "granger_causality_results.csv")
+        filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=pvalue_global, starting_genes=genelist_global)
         significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs)
 
     else:
@@ -1226,7 +1232,7 @@ def update_show_plots_button(search_value, dataset, summarization_technique, p_t
         significant_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold)
     elif dataset == 'large_kutsche':
         not_needed = None # Placeholder, as we read this from the file
-        filtered_pairs = filter_gene_pairs_kutsche(["ZEB2"],filepath = "granger_causality_results.csv")
+        filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=pvalue_global, starting_genes=genelist_global)
         significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs)
     else:
         significant_edges = []  # or any default value you prefer
@@ -1246,6 +1252,18 @@ def update_show_plots_button(search_value, dataset, summarization_technique, p_t
         return {'display': 'inline-block'}
     else:
         return {'display': 'none'}
+    
+@app.callback(
+    Output('download-graph-html', 'data'),
+    [Input('export-html-button', 'n_clicks')],
+    [State('network-graph', 'srcDoc')]
+)
+def export_graph_as_html(n_clicks, srcdoc):
+    if n_clicks and srcdoc:
+        # Return the srcDoc as an HTML file for download
+        return dcc.send_string(srcdoc, 'network.html')
+    return None
+
 
 
 # Run the app

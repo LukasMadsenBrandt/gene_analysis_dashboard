@@ -1,4 +1,6 @@
 import itertools
+import os
+import shutil
 import sys
 import warnings
 from statsmodels.regression.linear_model import RegressionResultsWrapper
@@ -131,7 +133,7 @@ def save_results_to_csv(gc_results, output_file):
 
 import tempfile
 
-def filter_gene_pairs(gene_list, filepath):
+def filter_gene_pairs(filepath, gene_list = None):
     """
     Filter gene pairs based on the presence of genes from a given list and save the results to a temporary CSV file.
 
@@ -165,3 +167,84 @@ def filter_gene_pairs(gene_list, filepath):
                     writer.writerow(row)
 
     return temp_file.name
+
+
+def filter_gene_pairs(filepath, p_threshold, starting_genes=None, download_path=None):
+    """
+    Filter gene pairs based on the p-value threshold and the presence of starting genes,
+    then exhaustively find all related genes that meet the criteria.
+
+    Args:
+    filepath (str): Path to the CSV file containing gene pairs.
+    p_threshold (float): The threshold for the p-value to consider a gene pair significant.
+    starting_genes (list): Initial list of gene names to start filtering by.
+    download_path (str, optional): If provided, the path to save the filtered CSV file.
+
+    Returns:
+    str: The path to the temporary CSV file containing the filtered gene pairs.
+    """
+    if starting_genes is None:
+        raise ValueError("A list of starting genes must be provided.")
+    
+    # Use sets for efficient lookups and to avoid duplicates
+    all_related_genes = set(starting_genes)
+    newly_added_genes = set(starting_genes)
+    
+    # Create a temporary file to store the filtered results
+    temp_file = tempfile.NamedTemporaryFile(delete=False, mode='w', newline='')
+    temp_file_path = temp_file.name
+    filtered_edges = []
+    
+    # First pass: filter out insignificant edges
+    with open(filepath, 'r') as file:
+        reader = csv.DictReader(file)
+        fieldnames = reader.fieldnames
+
+        for row in reader:
+            pvalue = float(row['p-value'])
+            if pvalue <= p_threshold:
+                filtered_edges.append(row)
+        
+        # We will collect all rows that meet the criteria and write them at the end
+        filtered_rows = []
+        
+        while newly_added_genes:
+            current_genes = newly_added_genes.copy()
+            newly_added_genes.clear()
+            
+            # Rewind the file to the start
+            file.seek(0)
+            next(reader)  # Skip the header row
+            
+            for row in filtered_edges:
+                gene1 = row['gene1']
+                gene2 = row['gene2']
+                pvalue = float(row['p-value'])
+                
+                # If either gene1 or gene2 is in the current set of related genes
+                if gene1 in current_genes or gene2 in current_genes:
+                    # Add the row to the filtered results
+                    filtered_rows.append(row)
+                    
+                    # Add the other gene to the set of all related genes
+                    if gene1 not in all_related_genes:
+                        newly_added_genes.add(gene1)
+                    if gene2 not in all_related_genes:
+                        newly_added_genes.add(gene2)
+                    
+                    # Update the set of all related genes
+                    all_related_genes.update([gene1, gene2])
+        
+    # Write the filtered results to the temporary file
+    with open(temp_file_path, 'w', newline='') as tmpfile:
+        writer = csv.DictWriter(tmpfile, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(filtered_rows)
+
+    # If a download path is specified, move the temp file to the download path
+    download_path = f'p_value_threshold_{p_threshold}.csv'
+    if download_path:
+        shutil.move(temp_file_path, download_path)
+        return download_path
+    
+    return temp_file_path
