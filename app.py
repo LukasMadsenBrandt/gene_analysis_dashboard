@@ -9,6 +9,8 @@ import graphviz
 import dash
 from dash import dcc, html
 from dash.dependencies import Input, Output, State
+from dash.exceptions import PreventUpdate
+
 import dash_bootstrap_components as dbc
 from plotly.subplots import make_subplots
 import plotly.io as pio
@@ -47,8 +49,10 @@ from gene_analysis_kutsche.data_filtering import filter_data_median as filter_me
 
 warnings.filterwarnings("ignore", message="'linear' x-axis tick spacing not even")
 
-pvalue_global = 0.000375
+# Config
+pvalue_global = 0.05
 genelist_global = ['ZEB2']
+weighted_edges = False
 debugging = True
 # Create cache directory if it doesn't exist
 
@@ -306,7 +310,10 @@ def create_graphviz_dot(G, partition, community_colors, highlight_node=None, lay
         return dot
 
     p_values = [G[source][target].get('p_value', 1.0) for source, target in G.edges()]
-    norm_p_values = normalize([-np.log10(p) for p in p_values], min_size=1, max_size=10)
+    if weighted_edges == True:
+        norm_p_values = normalize([-np.log10(p) for p in p_values], min_size=1, max_size=10)
+    else: 
+        norm_p_values = normalize([1 for p in p_values], min_size=3, max_size=3)
 
     for idx, (source, target) in enumerate(G.edges()):
         lag = G[source][target]['lag']
@@ -549,15 +556,29 @@ app.layout = html.Div([
             ]
         ),
         html.Label('P-value threshold:', style={'color': 'white'}),
-        dcc.Slider(
-            id='p-threshold-slider',
-            min=0.01,
-            max=0.1,
-            step=0.01,
-            value=0.05,
-            marks={i / 100: str(i / 100) for i in range(1, 11)},
-            tooltip={"placement": "bottom", "always_visible": True}
-        ),
+        html.Div([
+            dcc.Slider(
+                id='p-threshold-slider',
+                min=0.01,
+                max=0.1,
+                step=0.01,
+                value=0.05,
+                marks={i / 100: str(i / 100) for i in range(1, 11)},
+                tooltip={"placement": "bottom", "always_visible": True},
+            ),
+            html.Div([
+                dcc.Input(
+                    id='p-threshold-input',
+                    type='number',
+                    min=0.000001,
+                    max=1,
+                    step=0.000001,
+                    value=0.05,
+                    style={'width': '100px', 'backgroundColor': 'white', 'color': 'black'}
+                ),
+                dbc.Button("Apply", id="apply-button", color="primary", size="sm", style={'marginLeft': '10px'})
+            ], style={'display': 'flex', 'alignItems': 'center'})
+        ]),
         html.Label('Search for a gene:', style={'marginTop': '20px', 'color': 'white'}),
         dcc.Input(id='search-bar', type='text', placeholder='Search for a gene...', debounce=True, value='', style={'width': '100%', 'marginBottom': '20px', 'backgroundColor': 'white', 'color': 'black'}),
         dbc.Button("Show Plots", id="show-plots-button", color="primary", style={'marginTop': '10px'}),
@@ -617,6 +638,7 @@ app.layout = html.Div([
         dcc.Download(id='download-graph-html')  # Add Download component
     ])    
 ], style={'padding': '20px', 'position': 'relative'})
+
 
 
 # Apply custom CSS styles
@@ -825,7 +847,7 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
         significant_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=pvalue_global)
     elif dataset == 'large_kutsche':
         not_needed = None # Placeholder, as we read this from the file
-        filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=pvalue_global, gene_list=genelist_global)
+        filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=pvalue_global, starting_genes=genelist_global)
         significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=pvalue_global, file=True, filepath = filtered_pairs)
 
     else:
@@ -874,10 +896,6 @@ def handle_graph_update(p_threshold, search_value, layout, selected_communities,
     global benito_data, kutsche_data
 
     ctx = dash.callback_context
-    if dataset == 'large_kutsche':
-        p_threshold = 0.000375
-        not_needed = None
-
     # Determine the triggered input
     triggered_input = ctx.triggered[0]['prop_id'].split('.')[0]
 
@@ -904,7 +922,7 @@ def handle_graph_update(p_threshold, search_value, layout, selected_communities,
             significant_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold)
         elif dataset == 'large_kutsche':
             not_needed = None # Placeholder, as we read this from the file
-            filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=pvalue_global, gene_list=genelist_global)
+            filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=p_threshold, starting_genes=genelist_global)
             significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs)
         else:
             significant_edges = [] # or any default value you prefer
@@ -949,7 +967,7 @@ def handle_graph_update(p_threshold, search_value, layout, selected_communities,
         significant_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold)
     elif dataset == 'large_kutsche':
         not_needed = None # Placeholder, as we read this from the file
-        filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=pvalue_global, starting_genes=genelist_global)
+        filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=p_threshold, starting_genes=genelist_global)
         significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs)
     else:
         significant_edges = []  # or any default value you prefer
@@ -1264,6 +1282,21 @@ def export_graph_as_html(n_clicks, srcdoc):
         return dcc.send_string(srcdoc, 'network.html')
     return None
 
+# Callback to sync slider and input values when "Apply" button is clicked
+@app.callback(
+    [Output('p-threshold-slider', 'value'),
+     Output('p-threshold-input', 'value')],
+    [Input('apply-button', 'n_clicks')],
+    [State('p-threshold-input', 'value')]
+)
+def sync_p_value(n_clicks, input_value):
+    if n_clicks is None:
+        raise PreventUpdate
+
+    # Ensure input value stays within the slider range
+    adjusted_value = min(max(input_value, 0.000001), 1)
+    
+    return adjusted_value, adjusted_value
 
 
 # Run the app
