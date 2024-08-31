@@ -1,0 +1,8 @@
+The files include plots of some genes immediately related to ZEB2, if you have others in mind, I can share the software with you the software that I created that makes the plots interactable.
+In addition, there is a wide variety of networks, where the first layer has a different threshold from the other layers, as discussed.
+I.e. the genes immediately related to ZEB2, have a less strict threshold.
+Each folder is split into two subfolders, one for each community detection algorithm.
+Some of the networks were too time-consuming to visualize because the initial threshold was set very high, thus creating a huge network. Specifically, networks using the Girvan algorithm have been skipped for some thresholds, as a single network took several hours.
+I tried my best to include a wide variety of thresholds, such that one can see what happens to the network when changing the initial threshold (the p-value of edges going immediately from and to ZEB2).
+
+Please let me know what you think of it, and if you have any questions, please let me know. Also if you are confused about the naming of the files, I would be happy to jump on a videocall to clear up any confusion.

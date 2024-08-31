@@ -16,11 +16,13 @@ def main():
     print("Data loaded and preprocessed.")
     df_filtered, raw_data, day_map = filter_proximity_kutsche(df)
     print("Data filtered.")
-    gc_results = perform_gc_kutsche(df_filtered, progress=True)
+    #print 5 lines of the data
+    print(df_filtered.head())
+    #gc_results = perform_gc_kutsche(df_filtered, progress=True)
     print("Granger causality tests performed.")
 
     # Save results
-    save_results_to_csv_kutsche(gc_results, "granger_causality_results.csv")
+    #save_results_to_csv_kutsche(gc_results, "granger_causality_results.csv")
     print("Results saved to granger_causality_results.csv")
     
 

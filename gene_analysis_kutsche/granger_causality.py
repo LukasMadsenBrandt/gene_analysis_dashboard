@@ -76,7 +76,7 @@ def perform_granger_causality_tests(df_filtered_wt_weighted_mean, progress=False
 
 
 
-def collect_significant_edges(gc_results, p_value_threshold=0.05, file=False, filepath=None):
+def collect_significant_edges(gc_results, p_value_threshold=0.05, file=False, filepath=None, starting_genes=None, higher_threshold_for_starting_genes = 0.001):
     """
     Collects gene pairs with significant Granger causality into a list of edges with their corresponding lag,
     and whether the relationship is positive or negative.
@@ -108,7 +108,7 @@ def collect_significant_edges(gc_results, p_value_threshold=0.05, file=False, fi
                 except ValueError:
                     continue  # Skip rows with invalid lag or p-value
                 
-                if p_value < p_value_threshold:
+                if p_value <= p_value_threshold or ((gene1 in starting_genes or gene2 in starting_genes) and p_value <= higher_threshold_for_starting_genes):
                     significant_edges.append(((gene1, lag), (gene2, 0), p_value))
                     
     return significant_edges
@@ -133,43 +133,8 @@ def save_results_to_csv(gc_results, output_file):
 
 import tempfile
 
-def filter_gene_pairs(filepath, gene_list = None):
-    """
-    Filter gene pairs based on the presence of genes from a given list and save the results to a temporary CSV file.
 
-    Args:
-    gene_list (list): List of gene names to filter by.
-    filepath (str): Path to the CSV file containing gene pairs.
-
-    Returns:
-    str: The path to the temporary CSV file containing the filtered gene pairs.
-    """
-    # Create a temporary file to store the filtered results
-    temp_file = tempfile.NamedTemporaryFile(delete=False, mode='w', newline='')
-
-    with open(filepath, 'r') as file:
-        reader = csv.DictReader(file)
-        fieldnames = reader.fieldnames
-
-        # Write to the temporary file
-        with temp_file as tmpfile:
-            writer = csv.DictWriter(tmpfile, fieldnames=fieldnames)
-            writer.writeheader()
-            
-            # Iterate over each row in the CSV
-            for row in reader:
-                gene1 = row['gene1']
-                gene2 = row['gene2']
-                
-                # Check if either gene1 or gene2 is in the list of genes provided
-                if gene_list is None or gene1 in gene_list or gene2 in gene_list:
-                    # Write the row to the temporary file if a match is found
-                    writer.writerow(row)
-
-    return temp_file.name
-
-
-def filter_gene_pairs(filepath, p_threshold, starting_genes=None, download_path=None):
+def filter_gene_pairs(filepath, p_threshold, starting_genes=None, download_path=None, higher_threshold_for_starting_genes = 0.001):
     """
     Filter gene pairs based on the p-value threshold and the presence of starting genes,
     then exhaustively find all related genes that meet the criteria.
@@ -202,7 +167,9 @@ def filter_gene_pairs(filepath, p_threshold, starting_genes=None, download_path=
 
         for row in reader:
             pvalue = float(row['p-value'])
-            if pvalue <= p_threshold:
+            gene1 = row['gene1']
+            gene2 = row['gene2']
+            if pvalue <= p_threshold or ((gene1 in starting_genes or gene2 in starting_genes) and pvalue <= higher_threshold_for_starting_genes):
                 filtered_edges.append(row)
         
         # We will collect all rows that meet the criteria and write them at the end
@@ -242,8 +209,8 @@ def filter_gene_pairs(filepath, p_threshold, starting_genes=None, download_path=
         writer.writerows(filtered_rows)
 
     # If a download path is specified, move the temp file to the download path
-    download_path = f'p_value_threshold_{p_threshold}.csv'
-    if download_path:
+    if download_path != None:
+        download_path = f'p_value_threshold_{p_threshold}.csv'
         shutil.move(temp_file_path, download_path)
         return download_path
     
