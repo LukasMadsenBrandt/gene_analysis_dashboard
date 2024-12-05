@@ -9,6 +9,8 @@ import graphviz
 import dash
 from dash import dcc, html
 from dash.dependencies import Input, Output, State
+from dash.exceptions import PreventUpdate
+
 import dash_bootstrap_components as dbc
 from plotly.subplots import make_subplots
 import plotly.io as pio
@@ -38,6 +40,7 @@ from gene_analysis_benito.data_preprocessing import filter_data_median as filter
 from gene_analysis_benito.data_filtering import filter_data as mapper_benito
 
 from gene_analysis_kutsche.granger_causality import perform_granger_causality_tests as perform_gc_kutsche
+from gene_analysis_kutsche.granger_causality import filter_gene_pairs as filter_gene_pairs_kutsche
 from gene_analysis_kutsche.granger_causality import collect_significant_edges as collect_significant_edges_kutsche
 from gene_analysis_kutsche.data_preprocessing import load_and_preprocess_data as load_and_preprocess_kutsche
 from gene_analysis_kutsche.data_filtering import filter_data_proximity_based_weights as filter_proximity_kutsche
@@ -46,8 +49,11 @@ from gene_analysis_kutsche.data_filtering import filter_data_median as filter_me
 
 warnings.filterwarnings("ignore", message="'linear' x-axis tick spacing not even")
 
-
-debugging = False
+# Config
+pvalue_global = 0.05
+genelist_global = ['ZEB2']
+weighted_edges = False
+debugging = True
 # Create cache directory if it doesn't exist
 
 cache_dir = os.path.join(os.getcwd(), 'cache')
@@ -304,7 +310,10 @@ def create_graphviz_dot(G, partition, community_colors, highlight_node=None, lay
         return dot
 
     p_values = [G[source][target].get('p_value', 1.0) for source, target in G.edges()]
-    norm_p_values = normalize([-np.log10(p) for p in p_values], min_size=1, max_size=10)
+    if weighted_edges == True:
+        norm_p_values = normalize([-np.log10(p) for p in p_values], min_size=1, max_size=10)
+    else: 
+        norm_p_values = normalize([1 for p in p_values], min_size=3, max_size=3)
 
     for idx, (source, target) in enumerate(G.edges()):
         lag = G[source][target]['lag']
@@ -495,6 +504,7 @@ html_template = """
 </html>
 """
 
+
 # Define layout options
 layout_options = [
     {'label': 'DOT (Hierarchical)', 'value': 'dot', 'description': 'Hierarchical or layered drawings of directed graphs.'},
@@ -518,8 +528,9 @@ app.layout = html.Div([
         dcc.Dropdown(
             id='dataset-dropdown',
             options=[
-                {'label': 'Benito-Kwiecinski', 'value': 'benito'},
-                {'label': 'Kutsche', 'value': 'kutsche'},
+                {'label': '47-Benito-Kwiecinski', 'value': 'benito'},
+                {'label': '47-Kutsche', 'value': 'kutsche'},
+                {'label': 'Kutsche', 'value': 'large_kutsche' },
                 {'label': 'Intersection', 'value': 'intersection'}
             ],
             style={'backgroundColor': 'white', 'color': 'black', 'marginBottom': '20px'}
@@ -545,15 +556,29 @@ app.layout = html.Div([
             ]
         ),
         html.Label('P-value threshold:', style={'color': 'white'}),
-        dcc.Slider(
-            id='p-threshold-slider',
-            min=0.01,
-            max=0.1,
-            step=0.01,
-            value=0.05,
-            marks={i / 100: str(i / 100) for i in range(1, 11)},
-            tooltip={"placement": "bottom", "always_visible": True}
-        ),
+        html.Div([
+            dcc.Slider(
+                id='p-threshold-slider',
+                min=0.01,
+                max=0.1,
+                step=0.01,
+                value=0.05,
+                marks={i / 100: str(i / 100) for i in range(1, 11)},
+                tooltip={"placement": "bottom", "always_visible": True},
+            ),
+            html.Div([
+                dcc.Input(
+                    id='p-threshold-input',
+                    type='number',
+                    min=0.000001,
+                    max=1,
+                    step=0.000001,
+                    value=0.05,
+                    style={'width': '100px', 'backgroundColor': 'white', 'color': 'black'}
+                ),
+                dbc.Button("Apply", id="apply-button", color="primary", size="sm", style={'marginLeft': '10px'})
+            ], style={'display': 'flex', 'alignItems': 'center'})
+        ]),
         html.Label('Search for a gene:', style={'marginTop': '20px', 'color': 'white'}),
         dcc.Input(id='search-bar', type='text', placeholder='Search for a gene...', debounce=True, value='', style={'width': '100%', 'marginBottom': '20px', 'backgroundColor': 'white', 'color': 'black'}),
         dbc.Button("Show Plots", id="show-plots-button", color="primary", style={'marginTop': '10px'}),
@@ -592,7 +617,8 @@ app.layout = html.Div([
         ], style={'maxHeight': '200px', 'overflowY': 'scroll'}),
         
         html.Div(id='node-edge-info', style={'marginTop': '20px', 'color': 'white'}),
-        html.Div(id='selections-output', style={'color': 'red'})
+        html.Div(id='selections-output', style={'color': 'red'}),
+        dbc.Button("Export Graph as HTML", id="export-html-button", color="success", style={'marginTop': '20px'}),
     ], style={'position': 'fixed', 'top': '10px', 'left': '10px', 'width': '300px', 'zIndex': 1000, 'backgroundColor': 'rgba(0,0,0,0.65)', 'padding': '10px', 'borderRadius': '10px'}),
     html.Div([
         dcc.Loading(
@@ -608,10 +634,10 @@ app.layout = html.Div([
             children=[
                 html.Div(id='expression-plots')  # Container for the expression plots
             ]
-        )
+        ),
+        dcc.Download(id='download-graph-html')  # Add Download component
     ])    
 ], style={'padding': '20px', 'position': 'relative'})
-
 
 
 
@@ -710,6 +736,8 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
         elif summarization_technique == 'median':
             filter_function = filter_median_kutsche
         data_dict = kutsche_data
+    elif dataset == 'large_kutsche':
+        data_dict = {'proximity': None, 'mean': None, 'median': None}
     elif dataset == 'intersection':
         data_dict = {'proximity': None, 'mean': None, 'median': None}
 
@@ -791,8 +819,8 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
                     data_dict[summarization_technique] = perform_gc_benito(data_human, genes_file=os.path.join('Data', 'Benito', 'gene_names.txt'))
                     save_cache((data_dict[summarization_technique], data_human), cache_file)
 
-        kutsche_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=0.05)
-        benito_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=0.05)
+        kutsche_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=pvalue_global)
+        benito_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=pvalue_global)
 
         kutsche_edges = [(edge[0][0], edge[1][0], edge[0][1], edge[2]) for edge in kutsche_edges]
         benito_edges = [(edge[0][0], edge[1][0], edge[0][1], edge[2]) for edge in benito_edges]
@@ -801,6 +829,8 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
         benito_df = pd.DataFrame(benito_edges, columns=['Gene1', 'Gene2', 'Lag', 'P_Value'])
 
         tf_genes_proximity = compare_datasets(kutsche_df, benito_df)
+    
+        
     else:
         tf_genes_proximity = data_dict[summarization_technique]
 
@@ -808,7 +838,21 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
         return [], [], "", {'display': 'none'}, 'No significant edges found.', None, None, None, '', 2
 
     debug_print(f"Graph update: Dataset: {dataset}, Summarization Technique: {summarization_technique}, P-threshold: 0.05, Search: , Layout: dot")
-    significant_edges = tf_genes_proximity if dataset == 'intersection' else collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=0.05) if dataset == 'benito' else collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=0.05)
+    if dataset == 'intersection':
+        significant_edges = tf_genes_proximity
+    elif dataset == 'benito':
+        debug_print(f"Filtered pairs: {benito_data[summarization_technique]}")
+        significant_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=pvalue_global)
+    elif dataset == 'kutsche':
+        significant_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=pvalue_global)
+    elif dataset == 'large_kutsche':
+        not_needed = None # Placeholder, as we read this from the file
+        filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=pvalue_global, starting_genes=genelist_global)
+        significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=pvalue_global, file=True, filepath = filtered_pairs, starting_genes=genelist_global)
+
+    else:
+        significant_edges = [] # or any default value you prefer
+
     debug_print(f"Computed intersection data for graph update, edges count: {len(significant_edges)}")
 
     G = create_network(significant_edges)
@@ -852,7 +896,6 @@ def handle_graph_update(p_threshold, search_value, layout, selected_communities,
     global benito_data, kutsche_data
 
     ctx = dash.callback_context
-
     # Determine the triggered input
     triggered_input = ctx.triggered[0]['prop_id'].split('.')[0]
 
@@ -873,9 +916,16 @@ def handle_graph_update(p_threshold, search_value, layout, selected_communities,
             benito_df = pd.DataFrame(benito_edges, columns=['Gene1', 'Gene2', 'Lag', 'P_Value'])
 
             significant_edges = compare_datasets(kutsche_df, benito_df)
+        elif dataset == 'benito':
+            significant_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=p_threshold)
+        elif dataset == 'kutsche':
+            significant_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold)
+        elif dataset == 'large_kutsche':
+            not_needed = None # Placeholder, as we read this from the file
+            filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=p_threshold, starting_genes=genelist_global)
+            significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs, starting_genes=genelist_global)
         else:
-            significant_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=p_threshold) if dataset == 'benito' and benito_data[summarization_technique] else collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold) if kutsche_data[summarization_technique] else []
-
+            significant_edges = [] # or any default value you prefer
         if not significant_edges:
             return "", "No significant edges found.", [], [], None
         G = create_network(significant_edges)
@@ -910,8 +960,17 @@ def handle_graph_update(p_threshold, search_value, layout, selected_communities,
 
         significant_edges = compare_datasets(kutsche_df, benito_df)
         debug_print(f"Computed intersection data for graph update, edges count: {len(significant_edges)}")
+    
+    elif dataset == 'benito':
+        significant_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=p_threshold)
+    elif dataset == 'kutsche':
+        significant_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold)
+    elif dataset == 'large_kutsche':
+        not_needed = None # Placeholder, as we read this from the file
+        filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=p_threshold, starting_genes=genelist_global)
+        significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs, starting_genes=genelist_global)
     else:
-        significant_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=p_threshold) if dataset == 'benito' and benito_data[summarization_technique] else collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold) if kutsche_data[summarization_technique] else []
+        significant_edges = []  # or any default value you prefer
         debug_print(f"Computed significant edges for {dataset} data, edges count: {len(significant_edges)}")
 
     dot, community_options, error_message = update_graph_function(significant_edges, selected_communities, search_value, layout, community_detection_method=community_detection_method, num_communities=num_communities)
@@ -1009,6 +1068,7 @@ def create_combined_plot(figures, gene_names, title):
 
     return subplot_fig
 
+
 @app.callback(
     Output('expression-plots', 'children'),
     [Input('show-plots-button', 'n_clicks')],
@@ -1051,7 +1111,17 @@ def show_expression_plots(n_clicks, search_gene, dataset, summarization_techniqu
         return f"No data available for the selected dataset ({dataset}) and summarization technique ({summarization_technique})."
 
     # Retrieve the significant edges
-    significant_edges = collect_significant_edges_benito(data, p_value_threshold=p_threshold) if dataset == 'benito' else collect_significant_edges_kutsche(data, p_value_threshold=p_threshold)
+    if dataset == 'benito':
+        significant_edges = collect_significant_edges_benito(data, p_value_threshold=pvalue_global)
+    elif dataset == 'kutsche':
+        significant_edges = collect_significant_edges_kutsche(data, p_value_threshold=pvalue_global)
+    elif dataset == 'large_kutsche':
+        not_needed = None # Placeholder, as we read this from the file
+        filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=pvalue_global, starting_genes=genelist_global)
+        significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs, starting_genes=genelist_global)
+
+    else:
+        significant_edges = []  # or any default value you prefer
     debug_print(f"Debug: Retrieved {len(significant_edges)} significant edges")
 
     # Find genes influenced by the searched gene
@@ -1174,8 +1244,16 @@ def update_show_plots_button(search_value, dataset, summarization_technique, p_t
         return {'display': 'none'}
 
     # Retrieve the significant edges
-    significant_edges = collect_significant_edges_benito(data, p_value_threshold=p_threshold) if dataset == 'benito' else collect_significant_edges_kutsche(data, p_value_threshold=p_threshold)
-
+    if dataset == 'benito':
+        significant_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=p_threshold)
+    elif dataset == 'kutsche':
+        significant_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold)
+    elif dataset == 'large_kutsche':
+        not_needed = None # Placeholder, as we read this from the file
+        filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=pvalue_global, starting_genes=genelist_global)
+        significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs, starting_genes=genelist_global)
+    else:
+        significant_edges = []  # or any default value you prefer
     # Create the graph and apply community detection
     G = create_network(significant_edges)
     graph_pickle = pickle.dumps(G)
@@ -1192,6 +1270,33 @@ def update_show_plots_button(search_value, dataset, summarization_technique, p_t
         return {'display': 'inline-block'}
     else:
         return {'display': 'none'}
+    
+@app.callback(
+    Output('download-graph-html', 'data'),
+    [Input('export-html-button', 'n_clicks')],
+    [State('network-graph', 'srcDoc')]
+)
+def export_graph_as_html(n_clicks, srcdoc):
+    if n_clicks and srcdoc:
+        # Return the srcDoc as an HTML file for download
+        return dcc.send_string(srcdoc, 'network.html')
+    return None
+
+# Callback to sync slider and input values when "Apply" button is clicked
+@app.callback(
+    [Output('p-threshold-slider', 'value'),
+     Output('p-threshold-input', 'value')],
+    [Input('apply-button', 'n_clicks')],
+    [State('p-threshold-input', 'value')]
+)
+def sync_p_value(n_clicks, input_value):
+    if n_clicks is None:
+        raise PreventUpdate
+
+    # Ensure input value stays within the slider range
+    adjusted_value = min(max(input_value, 0.000001), 1)
+    
+    return adjusted_value, adjusted_value
 
 
 # Run the app
