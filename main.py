@@ -18,12 +18,12 @@ def main():
     print("Data filtered.")
     #print 5 lines of the data
     print(df_filtered.head())
-    #gc_results = perform_gc_kutsche(df_filtered, progress=True)
+    gc_results = perform_gc_kutsche(df_filtered, progress=True)
     print("Granger causality tests performed.")
 
     # Save results
-    #save_results_to_csv_kutsche(gc_results, "granger_causality_results.csv")
-    print("Results saved to granger_causality_results.csv")
+    save_results_to_csv_kutsche(gc_results, "granger_causality_results_2.csv")
+    print("Results saved to granger_causality_results_2.csv")
     
 
 if __name__ == '__main__':

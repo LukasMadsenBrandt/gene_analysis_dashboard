@@ -44,7 +44,7 @@ def perform_granger_causality_tests(df_filtered_wt_weighted_mean, progress=False
     """
     time_series_data = df_filtered_wt_weighted_mean.T  # To make each column a timeseries
 
-    genes = df_filtered_wt_weighted_mean.index.tolist()[:100]
+    genes = df_filtered_wt_weighted_mean.index.tolist()
     # n * (n-1) combinations of genes
     gene_combinations = list(itertools.permutations(genes, 2))
     total_combinations = len(gene_combinations)
