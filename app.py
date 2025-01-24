@@ -50,7 +50,7 @@ from gene_analysis_kutsche.data_filtering import filter_data_median as filter_me
 warnings.filterwarnings("ignore", message="'linear' x-axis tick spacing not even")
 
 # Config
-pvalue_global = 0.05
+pvalue_global = 0.0005
 genelist_global = ['ZEB2']
 weighted_edges = False
 debugging = True
@@ -848,7 +848,7 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
     elif dataset == 'large_kutsche':
         not_needed = None # Placeholder, as we read this from the file
         filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=pvalue_global, starting_genes=genelist_global)
-        significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=pvalue_global, file=True, filepath = filtered_pairs, starting_genes=genelist_global)
+        significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=pvalue_global, file=True, filepath = filtered_pairs, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
 
     else:
         significant_edges = [] # or any default value you prefer
@@ -923,7 +923,7 @@ def handle_graph_update(p_threshold, search_value, layout, selected_communities,
         elif dataset == 'large_kutsche':
             not_needed = None # Placeholder, as we read this from the file
             filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=p_threshold, starting_genes=genelist_global)
-            significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs, starting_genes=genelist_global)
+            significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
         else:
             significant_edges = [] # or any default value you prefer
         if not significant_edges:
@@ -968,7 +968,7 @@ def handle_graph_update(p_threshold, search_value, layout, selected_communities,
     elif dataset == 'large_kutsche':
         not_needed = None # Placeholder, as we read this from the file
         filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=p_threshold, starting_genes=genelist_global)
-        significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs, starting_genes=genelist_global)
+        significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
     else:
         significant_edges = []  # or any default value you prefer
         debug_print(f"Computed significant edges for {dataset} data, edges count: {len(significant_edges)}")
@@ -1118,7 +1118,7 @@ def show_expression_plots(n_clicks, search_gene, dataset, summarization_techniqu
     elif dataset == 'large_kutsche':
         not_needed = None # Placeholder, as we read this from the file
         filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=pvalue_global, starting_genes=genelist_global)
-        significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs, starting_genes=genelist_global)
+        significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
 
     else:
         significant_edges = []  # or any default value you prefer
@@ -1251,7 +1251,7 @@ def update_show_plots_button(search_value, dataset, summarization_technique, p_t
     elif dataset == 'large_kutsche':
         not_needed = None # Placeholder, as we read this from the file
         filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=pvalue_global, starting_genes=genelist_global)
-        significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs, starting_genes=genelist_global)
+        significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
     else:
         significant_edges = []  # or any default value you prefer
     # Create the graph and apply community detection
