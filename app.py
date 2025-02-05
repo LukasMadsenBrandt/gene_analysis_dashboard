@@ -32,8 +32,8 @@ import warnings
 
 
 # Importing functions from both folders
-from gene_analysis_benito.granger_causality import perform_granger_causality_tests_tf as perform_gc_benito
-from gene_analysis_benito.granger_causality import collect_significant_edges_tf as collect_significant_edges_benito
+from gene_analysis_benito.granger_causality import perform_granger_causality_tests as perform_gc_benito
+from gene_analysis_benito.granger_causality import collect_significant_edges as collect_significant_edges_benito
 from gene_analysis_benito.data_preprocessing import filter_data_proximity_based_weights as filter_proximity_benito
 from gene_analysis_benito.data_preprocessing import filter_data_arithmetic_mean as filter_mean_benito
 from gene_analysis_benito.data_preprocessing import filter_data_median as filter_median_benito
@@ -764,7 +764,7 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
             data_human, df, day_map = filter_function(df_human)
             # Remove rows with all 0's
             data_human = data_human.loc[(data_human != 0).any(axis=1)]
-            data_dict[summarization_technique] = perform_gc_benito(data_human, genes_file=os.path.join('Data', 'Benito', 'gene_names.txt'))
+            data_dict[summarization_technique] = perform_gc_benito(data_human)
         elif dataset == 'kutsche':
             df_human = load_and_preprocess_kutsche(os.path.join('Data', 'Kutsche', 'genes.txt'))
             data_human, df, day_map = filter_function(df_human)
@@ -816,7 +816,7 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
                     # Remove rows with all 0's
                     data_human = data_human.loc[(data_human != 0).any(axis=1)]
                     data_human, df, day_map = filter_function(df_human)
-                    data_dict[summarization_technique] = perform_gc_benito(data_human, genes_file=os.path.join('Data', 'Benito', 'gene_names.txt'))
+                    data_dict[summarization_technique] = perform_gc_benito(data_human)
                     save_cache((data_dict[summarization_technique], data_human), cache_file)
 
         kutsche_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=pvalue_global)
