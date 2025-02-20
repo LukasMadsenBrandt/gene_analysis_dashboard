@@ -1,2 +1,0 @@
-At this P-value threshold there are no outgoing edges from ZEB2 to any other genes, please look to the folder where we look at the threshold 0.005.
-

@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 
 # Load the CSV data into a DataFrame
-data = pd.read_csv("granger_causality_results.csv")
+data = pd.read_csv("granger_causality_results_benito_Human.csv")
 
 # Extract the p-values column
 p_values = data['p-value']

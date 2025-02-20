@@ -18,7 +18,7 @@ from gene_analysis_benito.data_preprocessing import filter_data_median as filter
 from gene_analysis_benito.data_filtering import filter_data as mapper_benito
 
 def main():
-    kutsche = False
+    kutsche = True
     if kutsche:            
         # Load and preprocess data
         print("Loading and preprocessing data...")
@@ -51,7 +51,6 @@ def main():
 
         save_results_to_csv_kutsche(gc_results, "granger_causality_results_benito.csv")
         print("granger_causality_results_benito.csv")
-    
 
 if __name__ == '__main__':
     abspath = os.path.abspath(__file__)

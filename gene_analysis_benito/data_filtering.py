@@ -13,7 +13,9 @@ def map_gene_name_to_data(mappingfile):
 
 def put_mapping_inside_of_datafile(datafile, mapping):
     # Load the data from the CSV file, tab-separated and skipping initial metadata lines
-    df = pd.read_csv(datafile, sep='\t', header=1)
+    df = pd.read_csv(datafile, sep='\t', header=1, on_bad_lines='skip')
+
+
     # Assuming 'mapping' is your dictionary mapping gene IDs to gene names
     # Add a new column to the DataFrame based on the mapping
     df['Gene_Name'] = df['Geneid'].map(mapping)

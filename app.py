@@ -1,4 +1,5 @@
 import subprocess
+import concurrent.futures
 import matplotlib
 matplotlib.use('Agg')
 import shutil
@@ -6,6 +7,7 @@ from matplotlib import pyplot as plt
 import networkx as nx
 import numpy as np
 import graphviz
+import base64
 import dash
 from dash import dcc, html
 from dash.dependencies import Input, Output, State
@@ -33,6 +35,7 @@ import warnings
 
 # Importing functions from both folders
 from gene_analysis_benito.granger_causality import perform_granger_causality_tests as perform_gc_benito
+from gene_analysis_benito.granger_causality import filter_gene_pairs as filter_gene_pairs_benito
 from gene_analysis_benito.granger_causality import collect_significant_edges as collect_significant_edges_benito
 from gene_analysis_benito.data_preprocessing import filter_data_proximity_based_weights as filter_proximity_benito
 from gene_analysis_benito.data_preprocessing import filter_data_arithmetic_mean as filter_mean_benito
@@ -50,7 +53,7 @@ from gene_analysis_kutsche.data_filtering import filter_data_median as filter_me
 warnings.filterwarnings("ignore", message="'linear' x-axis tick spacing not even")
 
 # Config
-pvalue_global = 0.0005
+pvalue_global = 0.0001
 genelist_global = ['ZEB2']
 weighted_edges = False
 debugging = True
@@ -181,6 +184,58 @@ def girvan_newman_community_detection(G, num_communities=2):
             partition[node] = community_number
 
     return partition
+
+
+from sklearn.cluster import AgglomerativeClustering
+
+def run_louvain_once(G, seed):
+    partition = community_louvain.best_partition(G.to_undirected(), random_state=seed)
+    return partition
+
+def run_multiple_louvain_parallel(G, n_runs=100):
+    partitions = []
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = [executor.submit(run_louvain_once, G, seed) for seed in range(n_runs)]
+        for future in concurrent.futures.as_completed(futures):
+            partitions.append(future.result())
+    debug_print(f"Consensus detection complete: {len(partitions)} partitions run (expected {n_runs}).")
+    return partitions
+
+
+def build_coassociation_matrix(G, partitions):
+    nodes = list(G.nodes())
+    n = len(nodes)
+    coassoc = np.zeros((n, n))
+    for part in partitions:
+        for i in range(n):
+            for j in range(i, n):
+                if part.get(nodes[i]) == part.get(nodes[j]):
+                    coassoc[i, j] += 1
+                    if i != j:
+                        coassoc[j, i] += 1
+    coassoc /= len(partitions)
+    return nodes, coassoc
+
+def consensus_partition(G, n_runs=20, n_clusters=None):
+    partitions = run_multiple_louvain_parallel(G, n_runs)
+    nodes, coassoc = build_coassociation_matrix(G, partitions)
+    # If n_clusters is not provided, compute it as the average number of communities over all partitions.
+    if n_clusters is None:
+        total_communities = sum(len(set(partition.values())) for partition in partitions)
+        avg_communities = total_communities / len(partitions)
+        n_clusters = int(round(avg_communities))
+    # Convert coassociation to a distance matrix (1 - coassociation)
+    distance_matrix = 1 - coassoc
+    clustering = AgglomerativeClustering(
+        n_clusters=n_clusters,
+        metric='precomputed',
+        linkage='average'
+    )
+    labels = clustering.fit_predict(distance_matrix)
+    consensus = {node: labels[i] for i, node in enumerate(nodes)}
+    return consensus, coassoc, partitions
+
+
 
 
 def apply_community_detection(G, method='louvain', num_communities=None):
@@ -356,40 +411,53 @@ def compare_datasets(kutsche, benito):
 
     return common_edges
 
-# Function to update the graph based on selected communities and search value
-def update_graph_function(significant_edges, selected_communities, search_value=None, layout="dot", community_detection_method="louvain", num_communities=None):
-    debug_print("Updating graph with selected communities and search value.")
-    debug_print_edges(significant_edges, "Significant Edges Before Filtering:")
-
+def update_graph_function(significant_edges, selected_communities, search_value, layout,
+                          community_detection_method="louvain", num_communities=None,
+                          partition_override=None):
+    # Create network from edges
     G = create_network(significant_edges)
-    #debug_print_graph_details(G, "Graph Details Before Community Detection:")
-
+    
     if G.number_of_nodes() == 0:
         return None, [], "Graph is empty."
 
-    graph_pickle = pickle.dumps(G)
-    partition = cached_apply_community_detection(graph_pickle, method=community_detection_method, num_communities=num_communities if community_detection_method != 'louvain' else None)
+    # Use the provided partition if it exists.
+    if partition_override is not None:
+        partition = partition_override
+    else:
+        graph_pickle = pickle.dumps(G)
+        partition = cached_apply_community_detection(
+            graph_pickle,
+            method=community_detection_method,
+            num_communities=num_communities if community_detection_method != 'louvain' else None
+        )
+
+    # Now, assign colors using the partition.
     partition_tuple = partition_to_tuple(partition)
     community_colors = cached_assign_colors(partition_tuple)
-
+    
+    # Apply community filtering if the user selected a subset.
     if selected_communities:
-        nodes_to_keep = {node for node, community in partition.items() if community in selected_communities}
+        nodes_to_keep = {node for node, comm in partition.items() if comm in selected_communities}
         G = G.subgraph(nodes_to_keep).copy()
-        debug_print(f"Nodes to keep after filtering by communities: {nodes_to_keep}")
 
-    #debug_print_graph_details(G, "Graph Details After Filtering by Communities:")
-
+    # Error handling for search value.
     if search_value and search_value not in G.nodes():
         error_message = f"Gene '{search_value}' not found in the graph."
         debug_print(error_message)
     else:
         error_message = ""
 
+    # Build checklist options using the assigned colors.
+    community_options = [
+        {'label': html.Span(f'Community {comm}', style={'color': community_colors.get(comm, ("#000000",))[0]}),
+         'value': comm} for comm in set(partition.values())
+    ]
+    
+    # Create the Graphviz DOT representation.
     dot = create_graphviz_dot(G, partition, community_colors, highlight_node=search_value, layout=layout)
-    community_options = [{'label': html.Span(f'{color_name}', style={'color': color_hex}), 'value': community} for community, (color_hex, color_name) in community_colors.items()]
-
-    debug_print("Graph update complete.")
     return dot, community_options, error_message
+
+
 
 
 # HTML template for embedding Graphviz output with zoom and pan
@@ -531,6 +599,8 @@ app.layout = html.Div([
                 {'label': '47-Benito-Kwiecinski', 'value': 'benito'},
                 {'label': '47-Kutsche', 'value': 'kutsche'},
                 {'label': 'Kutsche', 'value': 'large_kutsche' },
+                {'label': 'Benito Human', 'value': 'large_benito_human' },
+                {'label': 'Benito Gorilla', 'value': 'large_benito_gorilla' },
                 {'label': 'Intersection', 'value': 'intersection'}
             ],
             style={'backgroundColor': 'white', 'color': 'black', 'marginBottom': '20px'}
@@ -595,16 +665,24 @@ app.layout = html.Div([
             id='community-detection-method-dropdown',
             options=[
                 {'label': 'Louvain Undirected edges', 'value': 'louvain'},
-                {'label': 'Girvan-Newman Directed edges', 'value': 'girvan_newman'}
+                {'label': 'Girvan-Newman Directed edges', 'value': 'girvan_newman'},
+                {'label': 'Consensus (multiple Louvain runs)', 'value': 'consensus'}
             ],
             value='louvain',
             style={'backgroundColor': 'white', 'color': 'black', 'marginBottom': '20px'}
         ),
+        html.Div(id='num-of-consensus-runs-container', children=[
+            html.Label('Number of Consensus Runs:', style={'color': 'white', 'display': 'inline-block', 'marginRight': '10px'}),
+            dcc.Input(id='num-of-consensus-runs', type='number', min=1, step=1, max=10000000, value=100, style={'marginBottom': '20px', 'display': 'inline-block'}),
+        ], style={'display': 'none'}),
         html.Div(id='num-of-communities-container', children=[
             html.Label('Number of Communities:', style={'color': 'white', 'display': 'inline-block', 'marginRight': '10px'}),
             dcc.Input(id='num-of-communities', type='number', min=1, step=1, max=20, style={'marginBottom': '20px', 'display': 'inline-block'}),
         ], style={'display': 'none'}),
         dbc.Button("Toggle All", id="toggle-all-button", color="primary", style={'marginTop': '10px'}),
+        dbc.Button("Apply Communities", id="apply-communities-button", color="primary", style={'marginTop': '10px'}),
+        # Hidden store to keep track of the applied community selection.
+        dcc.Store(id='heavy-network-store', data={}),
         html.Label('Select Communities:', style={'marginTop': '20px', 'color': 'white'}),
         html.Div(id='community-checklist-container-2', children=[
             dbc.Checklist(
@@ -621,6 +699,7 @@ app.layout = html.Div([
         dbc.Button("Export Graph as HTML", id="export-html-button", color="success", style={'marginTop': '20px'}),
     ], style={'position': 'fixed', 'top': '10px', 'left': '10px', 'width': '300px', 'zIndex': 1000, 'backgroundColor': 'rgba(0,0,0,0.65)', 'padding': '10px', 'borderRadius': '10px'}),
     html.Div([
+        html.Div(id='store-output'),
         dcc.Loading(
             id="loading-network-graph",
             type="default",
@@ -686,6 +765,16 @@ app.index_string = '''
 </html>
 '''
 
+@app.callback(
+    Output('num-of-consensus-runs-container', 'style'),
+    Input('community-detection-method-dropdown', 'value')
+)
+def show_hide_consensus_runs(method):
+    if method == 'consensus':
+        return {'display': 'block'}
+    return {'display': 'none'}
+
+
 # Function that updates that recomputes or load the data from cache, whenever the user presses the "Send" button
 @app.callback(
     [Output('community-checklist', 'options'),
@@ -736,9 +825,7 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
         elif summarization_technique == 'median':
             filter_function = filter_median_kutsche
         data_dict = kutsche_data
-    elif dataset == 'large_kutsche':
-        data_dict = {'proximity': None, 'mean': None, 'median': None}
-    elif dataset == 'intersection':
+    else:
         data_dict = {'proximity': None, 'mean': None, 'median': None}
 
     if data_dict is None:
@@ -837,7 +924,7 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
     if tf_genes_proximity is None:
         return [], [], "", {'display': 'none'}, 'No significant edges found.', None, None, None, '', 2
 
-    debug_print(f"Graph update: Dataset: {dataset}, Summarization Technique: {summarization_technique}, P-threshold: 0.05, Search: , Layout: dot")
+    #debug_print(f"Graph update: Dataset: {dataset}, Summarization Technique: {summarization_technique}, P-threshold: 0.05, Search: , Layout: dot")
     if dataset == 'intersection':
         significant_edges = tf_genes_proximity
     elif dataset == 'benito':
@@ -847,8 +934,16 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
         significant_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=pvalue_global)
     elif dataset == 'large_kutsche':
         not_needed = None # Placeholder, as we read this from the file
-        filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=pvalue_global, starting_genes=genelist_global)
+        filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=pvalue_global, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
         significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=pvalue_global, file=True, filepath = filtered_pairs, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
+    elif dataset == 'large_benito_human':
+        not_needed = None # Placeholder, as we read this from the file
+        filtered_pairs = filter_gene_pairs_benito(filepath = "granger_causality_results_benito_Human.csv", p_threshold=pvalue_global, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
+        significant_edges = collect_significant_edges_benito(filtered_pairs, p_value_threshold=pvalue_global, file=True, filepath = filtered_pairs, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
+    elif dataset == 'large_benito_gorilla':
+        not_needed = None # Placeholder, as we read this from the file
+        filtered_pairs = filter_gene_pairs_benito(filepath = "granger_causality_results_benito_Gorilla.csv", p_threshold=pvalue_global, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
+        significant_edges = collect_significant_edges_benito(filtered_pairs, p_value_threshold=pvalue_global, file=True, filepath = filtered_pairs, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
 
     else:
         significant_edges = [] # or any default value you prefer
@@ -872,130 +967,163 @@ def send_selections(n_clicks, dataset, summarization_technique, community_detect
     # Return the data to be stored in dcc.Store and clear search bar
     return community_options, community_values, "", {'display': 'none'}, 'Please select options and press "Send" to generate the graph.', data_human.to_dict(), dataset, summarization_technique, '', num_communities
 
-# The function that handles the graph updates, when various things are changed by the user, like p-threshold, search bar, layout, etc.
+@app.callback(
+    Output('heavy-network-store', 'data'),
+    [Input('apply-button', 'n_clicks')],
+    [State('p-threshold-input', 'value'),
+     State('dataset-dropdown', 'value'),
+     State('summarization-technique-dropdown', 'value'),
+     State('community-detection-method-dropdown', 'value'),
+     State('num-of-communities', 'value'),
+     State('num-of-consensus-runs', 'value')],
+    prevent_initial_call=True
+)
+def compute_heavy_network(apply_click,
+                          p_threshold, dataset, summarization_technique,
+                          community_detection_method, num_communities, num_consensus_runs):
+    global benito_data, kutsche_data
+    if not dataset or not summarization_technique:
+        return None
+
+    # ---------------------------
+    # Step 1: Compute significant edges (once)
+    # ---------------------------
+    if dataset == 'intersection':
+        kutsche_edges = (collect_significant_edges_kutsche(kutsche_data[summarization_technique], 
+                                                            p_value_threshold=p_threshold)
+                          if kutsche_data[summarization_technique] else [])
+        benito_edges = (collect_significant_edges_benito(benito_data[summarization_technique], 
+                                                         p_value_threshold=p_threshold)
+                        if benito_data[summarization_technique] else [])
+        kutsche_edges = [(edge[0][0], edge[1][0], edge[0][1], edge[2]) for edge in kutsche_edges]
+        benito_edges = [(edge[0][0], edge[1][0], edge[0][1], edge[2]) for edge in benito_edges]
+        kutsche_df = pd.DataFrame(kutsche_edges, columns=['Gene1', 'Gene2', 'Lag', 'P_Value'])
+        benito_df = pd.DataFrame(benito_edges, columns=['Gene1', 'Gene2', 'Lag', 'P_Value'])
+        significant_edges = compare_datasets(kutsche_df, benito_df)
+    elif dataset == 'benito':
+        significant_edges = collect_significant_edges_benito(benito_data[summarization_technique], 
+                                                              p_value_threshold=p_threshold)
+    elif dataset == 'kutsche':
+        significant_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], 
+                                                               p_value_threshold=p_threshold)
+    elif dataset == 'large_kutsche':
+        filtered_pairs = filter_gene_pairs_kutsche(filepath="granger_causality_results.csv",
+                                                   p_threshold=p_threshold,
+                                                   starting_genes=genelist_global,
+                                                   higher_threshold_for_starting_genes=pvalue_global)
+        significant_edges = collect_significant_edges_kutsche(filtered_pairs,
+                                                              p_value_threshold=p_threshold,
+                                                              file=True,
+                                                              filepath=filtered_pairs,
+                                                              starting_genes=genelist_global,
+                                                              higher_threshold_for_starting_genes=pvalue_global)
+    elif dataset == 'large_benito_human':
+        filtered_pairs = filter_gene_pairs_benito(filepath="granger_causality_results_benito_Human.csv",
+                                                  p_threshold=p_threshold,
+                                                  starting_genes=genelist_global,
+                                                  higher_threshold_for_starting_genes=pvalue_global)
+        significant_edges = collect_significant_edges_benito(filtered_pairs,
+                                                             p_value_threshold=p_threshold,
+                                                             file=True,
+                                                             filepath=filtered_pairs,
+                                                             starting_genes=genelist_global,
+                                                             higher_threshold_for_starting_genes=pvalue_global)
+    elif dataset == 'large_benito_gorilla':
+        filtered_pairs = filter_gene_pairs_benito(filepath="granger_causality_results_benito_Gorilla.csv",
+                                                  p_threshold=p_threshold,
+                                                  starting_genes=genelist_global,
+                                                  higher_threshold_for_starting_genes=pvalue_global)
+        significant_edges = collect_significant_edges_benito(filtered_pairs,
+                                                             p_value_threshold=p_threshold,
+                                                             file=True,
+                                                             filepath=filtered_pairs,
+                                                             starting_genes=genelist_global,
+                                                             higher_threshold_for_starting_genes=pvalue_global)
+    else:
+        significant_edges = []
+
+    if not significant_edges:
+        return None
+
+    G = create_network(significant_edges)
+    
+    # Run community detection (you may choose consensus or another method)
+    if community_detection_method == 'consensus':
+        consensus, coassoc, partitions = consensus_partition(G, n_runs=num_consensus_runs)
+        partition = consensus
+        gene_of_interest = "ZEB2"  # adjust gene if needed
+        if gene_of_interest in consensus:
+            debug_print(f"Consensus: Gene {gene_of_interest} is in community {consensus[gene_of_interest]}")
+    else:
+        partition = cached_apply_community_detection(pickle.dumps(G), community_detection_method,
+                                                     num_communities if community_detection_method != 'louvain' else None)
+
+    # Pack the heavy network data (serialize the graph and partition)
+    try:
+        # heavy computation code
+        graph_pickle_bytes = pickle.dumps(G)
+        graph_pickle_str = base64.b64encode(graph_pickle_bytes).decode('utf-8')
+        heavy_data = {'graph_pickle': graph_pickle_str, 'partition': partition}
+        return heavy_data
+
+    except Exception as e:
+        debug_print("Error in heavy callback:", e)
+        raise PreventUpdate
+
 @app.callback(
     [Output('network-graph', 'srcDoc'),
      Output('selections-output', 'children'),
      Output('community-checklist', 'options', allow_duplicate=True),
      Output('community-checklist', 'value', allow_duplicate=True),
      Output('num-of-communities', 'value', allow_duplicate=True)],
-    [Input('p-threshold-slider', 'value'),
-     Input('search-bar', 'value'),
-     Input('layout-dropdown', 'value'),
-     Input('community-checklist', 'value'),
-     Input('toggle-all-button', 'n_clicks'),
-     Input('community-detection-method-dropdown', 'value'),
-     Input('num-of-communities', 'value')],
-    [State('dataset-dropdown', 'value'),
-     State('summarization-technique-dropdown', 'value'),
-     State('community-checklist', 'options'),
-     State('toggle-state', 'data')],
-    prevent_initial_call=True
+    [Input('heavy-network-store', 'data'),
+     Input('apply-communities-button', 'n_clicks')],
+    [State('community-checklist', 'value'),
+     State('layout-dropdown', 'value'),
+     State('search-bar', 'value')],
+     prevent_initial_call=True
 )
-def handle_graph_update(p_threshold, search_value, layout, selected_communities, n_clicks, community_detection_method, num_communities, dataset, summarization_technique, community_options, toggle_state):
-    global benito_data, kutsche_data
+def update_graph(heavy_data, apply_comm_clicks, selected_communities, layout, search_value):
+    # If heavy data isn’t present, do nothing.
+    #debug_print("Filtering callback triggered, heavy_data:", heavy_data)
+    if not heavy_data or 'graph_pickle' not in heavy_data or 'partition' not in heavy_data:
+        debug_print("No heavy data found.")
+        raise PreventUpdate
 
-    ctx = dash.callback_context
-    # Determine the triggered input
-    triggered_input = ctx.triggered[0]['prop_id'].split('.')[0]
-
-    # Validate dataset and summarization technique selection
-    if not dataset or not summarization_technique:
-        return "", "Both dataset and summarization technique must be selected.", [], [], None
-
-    # Always select all communities when p-threshold-slider is moved or num-of-communities is changed
-    if triggered_input in ['p-threshold-slider', 'num-of-communities', 'community-detection-method-dropdown']:
-        if dataset == 'intersection':
-            kutsche_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold) if kutsche_data[summarization_technique] else []
-            benito_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=p_threshold) if benito_data[summarization_technique] else []
-
-            kutsche_edges = [(edge[0][0], edge[1][0], edge[0][1], edge[2]) for edge in kutsche_edges]
-            benito_edges = [(edge[0][0], edge[1][0], edge[0][1], edge[2]) for edge in benito_edges]
-
-            kutsche_df = pd.DataFrame(kutsche_edges, columns=['Gene1', 'Gene2', 'Lag', 'P_Value'])
-            benito_df = pd.DataFrame(benito_edges, columns=['Gene1', 'Gene2', 'Lag', 'P_Value'])
-
-            significant_edges = compare_datasets(kutsche_df, benito_df)
-        elif dataset == 'benito':
-            significant_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=p_threshold)
-        elif dataset == 'kutsche':
-            significant_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold)
-        elif dataset == 'large_kutsche':
-            not_needed = None # Placeholder, as we read this from the file
-            filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=p_threshold, starting_genes=genelist_global)
-            significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
-        else:
-            significant_edges = [] # or any default value you prefer
-        if not significant_edges:
-            return "", "No significant edges found.", [], [], None
-        G = create_network(significant_edges)
-        if triggered_input != 'num-of-communities':
-            if community_detection_method == 'girvan_newman':
-                # Run Louvain first to determine the default number of communities
-                louvain_partition = community_louvain.best_partition(G.to_undirected(), random_state=42)
-                num_communities = len(set(louvain_partition.values()))
-            
-        partition = cached_apply_community_detection(pickle.dumps(G), community_detection_method, num_communities if community_detection_method != 'louvain' else None)
-        partition_tuple = partition_to_tuple(partition)
-        community_colors = cached_assign_colors(partition_tuple)
-        community_options = [{'label': html.Span(f'Community {comm}', style={'color': community_colors[comm]}), 'value': comm} for comm in set(partition.values())]
-        selected_communities = [comm['value'] for comm in community_options]
-
-    elif triggered_input == 'toggle-all-button':
-        all_communities, new_toggle_state = toggle_all_communities(community_options, toggle_state)
-        selected_communities = all_communities if new_toggle_state else []
-        return dash.no_update, dash.no_update, community_options, selected_communities, num_communities
-
-    debug_print(f"Graph update: Dataset: {dataset}, Summarization Technique: {summarization_technique}, P-threshold: {p_threshold}, Search: {search_value}, Layout: {layout}")
-
-    if dataset == 'intersection':
-        kutsche_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold) if kutsche_data[summarization_technique] else []
-        benito_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=p_threshold) if benito_data[summarization_technique] else []
-
-        kutsche_edges = [(edge[0][0], edge[1][0], edge[0][1], edge[2]) for edge in kutsche_edges]
-        benito_edges = [(edge[0][0], edge[1][0], edge[0][1], edge[2]) for edge in benito_edges]
-
-        kutsche_df = pd.DataFrame(kutsche_edges, columns=['Gene1', 'Gene2', 'Lag', 'P_Value'])
-        benito_df = pd.DataFrame(benito_edges, columns=['Gene1', 'Gene2', 'Lag', 'P_Value'])
-
-        significant_edges = compare_datasets(kutsche_df, benito_df)
-        debug_print(f"Computed intersection data for graph update, edges count: {len(significant_edges)}")
-    
-    elif dataset == 'benito':
-        significant_edges = collect_significant_edges_benito(benito_data[summarization_technique], p_value_threshold=p_threshold)
-    elif dataset == 'kutsche':
-        significant_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold)
-    elif dataset == 'large_kutsche':
-        not_needed = None # Placeholder, as we read this from the file
-        filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=p_threshold, starting_genes=genelist_global)
-        significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
-    else:
-        significant_edges = []  # or any default value you prefer
-        debug_print(f"Computed significant edges for {dataset} data, edges count: {len(significant_edges)}")
-
-    dot, community_options, error_message = update_graph_function(significant_edges, selected_communities, search_value, layout, community_detection_method=community_detection_method, num_communities=num_communities)
-
-    if dot is None:
-        if significant_edges:
-            return "", error_message, community_options, [], num_communities
-        else:
-            return "", "No significant edges found.", community_options, [], None
-
+    debug_print("Updating graph...")
+    # Use all communities by default if nothing is selected.
+    # (Assuming you compute available communities from the stored partition.)
+    try:
+        graph_pickle_bytes = base64.b64decode(heavy_data['graph_pickle'])
+        G = pickle.loads(graph_pickle_bytes)
+        partition = heavy_data['partition']
+        available_communities = set(partition.values())
+    except Exception as e:
+        return f"<p>Error loading graph data: {e}</p>"
     if not selected_communities:
-        message = "Please select at least one community to display the graph."
-        return "", message, community_options, [], num_communities
+        selected_communities = list(available_communities)
+    
+    # (Optionally, update community colors if needed)
+    partition_tuple = partition_to_tuple(partition)
+    community_colors = cached_assign_colors(partition_tuple)
+
+    community_options = [
+        {'label': html.Span(f'{comm}', style={'color': community_colors.get(comm, ("#000000",))[0]}),
+         'value': comm} for comm in set(partition.values())
+    ]
+    # Filter the graph based on the selected communities.
+    nodes_to_keep = {node for node, comm in partition.items() if comm in selected_communities}
+    G_filtered = G.subgraph(nodes_to_keep).copy()
+
+    # Create the Graphviz DOT representation.
+    dot = create_graphviz_dot(G_filtered, partition, community_colors, highlight_node=search_value, layout=layout)
 
     try:
         graph_svg = dot.pipe(format='svg').decode('utf-8')
         graph_html = html_template.format(graph=graph_svg)
-        return graph_html, error_message, community_options, selected_communities, num_communities
-    except subprocess.CalledProcessError as e:
-        error_message = f"Error generating graph: {e}"
-        return "", error_message, community_options, selected_communities, num_communities
-
+        return graph_html, "", community_options, selected_communities, len(available_communities)
     except Exception as e:
-        error_message = f"An unexpected error occurred: {e}"
-        return "", error_message, community_options, selected_communities, num_communities
+        return "", f"Error generating graph: {e}", community_options, selected_communities, len(available_communities)
 
 
 @app.callback(
@@ -1117,8 +1245,16 @@ def show_expression_plots(n_clicks, search_gene, dataset, summarization_techniqu
         significant_edges = collect_significant_edges_kutsche(data, p_value_threshold=pvalue_global)
     elif dataset == 'large_kutsche':
         not_needed = None # Placeholder, as we read this from the file
-        filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=pvalue_global, starting_genes=genelist_global)
+        filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=p_threshold, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
         significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
+    elif dataset == 'large_benito_human':
+        not_needed = None # Placeholder, as we read this from the file
+        filtered_pairs = filter_gene_pairs_benito(filepath = "granger_causality_results_benito_Human.csv", p_threshold=p_threshold, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
+        significant_edges = collect_significant_edges_benito(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
+    elif dataset == 'large_benito_gorilla':
+        not_needed = None # Placeholder, as we read this from the file
+        filtered_pairs = filter_gene_pairs_benito(filepath = "granger_causality_results_benito_Gorilla.csv", p_threshold=p_threshold, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
+        significant_edges = collect_significant_edges_benito(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
 
     else:
         significant_edges = []  # or any default value you prefer
@@ -1250,8 +1386,17 @@ def update_show_plots_button(search_value, dataset, summarization_technique, p_t
         significant_edges = collect_significant_edges_kutsche(kutsche_data[summarization_technique], p_value_threshold=p_threshold)
     elif dataset == 'large_kutsche':
         not_needed = None # Placeholder, as we read this from the file
-        filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=pvalue_global, starting_genes=genelist_global)
+        filtered_pairs = filter_gene_pairs_kutsche(filepath = "granger_causality_results.csv", p_threshold=p_threshold, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
         significant_edges = collect_significant_edges_kutsche(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
+    elif dataset == 'large_benito_human':
+        not_needed = None # Placeholder, as we read this from the file
+        filtered_pairs = filter_gene_pairs_benito(filepath = "granger_causality_results_benito_Human.csv", p_threshold=p_threshold, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
+        significant_edges = collect_significant_edges_benito(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
+    elif dataset == 'large_benito_gorilla':
+        not_needed = None # Placeholder, as we read this from the file
+        filtered_pairs = filter_gene_pairs_benito(filepath = "granger_causality_results_benito_Gorilla.csv", p_threshold=p_threshold, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
+        significant_edges = collect_significant_edges_benito(filtered_pairs, p_value_threshold=p_threshold, file=True, filepath = filtered_pairs, starting_genes=genelist_global, higher_threshold_for_starting_genes=pvalue_global)
+
     else:
         significant_edges = []  # or any default value you prefer
     # Create the graph and apply community detection
