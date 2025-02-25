@@ -53,7 +53,7 @@ from gene_analysis_kutsche.data_filtering import filter_data_median as filter_me
 warnings.filterwarnings("ignore", message="'linear' x-axis tick spacing not even")
 
 # Config
-pvalue_global = 0.0001
+pvalue_global = 0.0004
 genelist_global = ['ZEB2']
 weighted_edges = False
 debugging = True
@@ -216,14 +216,16 @@ def build_coassociation_matrix(G, partitions):
     coassoc /= len(partitions)
     return nodes, coassoc
 
-def consensus_partition(G, n_runs=20, n_clusters=None):
+def consensus_partition(G, n_runs=20, n_clusters=None, gene_of_interest=None):
     partitions = run_multiple_louvain_parallel(G, n_runs)
     nodes, coassoc = build_coassociation_matrix(G, partitions)
+    
     # If n_clusters is not provided, compute it as the average number of communities over all partitions.
     if n_clusters is None:
         total_communities = sum(len(set(partition.values())) for partition in partitions)
         avg_communities = total_communities / len(partitions)
         n_clusters = int(round(avg_communities))
+    
     # Convert coassociation to a distance matrix (1 - coassociation)
     distance_matrix = 1 - coassoc
     clustering = AgglomerativeClustering(
@@ -233,7 +235,24 @@ def consensus_partition(G, n_runs=20, n_clusters=None):
     )
     labels = clustering.fit_predict(distance_matrix)
     consensus = {node: labels[i] for i, node in enumerate(nodes)}
-    return consensus, coassoc, partitions
+    
+    # Compute the union of all genes that have ever been in the same community as gene_of_interest
+    union_genes = set()
+    if gene_of_interest is not None:
+        for partition in partitions:
+            if gene_of_interest in partition:
+                current_comm = partition[gene_of_interest]
+                union_genes.update([node for node, comm in partition.items() if comm == current_comm])
+                #### DEBUGGING ####
+                #debug_print(f"Partition: {partition}")
+                #debug_print(f"Gene of interest {gene_of_interest} is in community {current_comm}")
+                #debug_print(f"Unique gene: {union_genes}")
+                #debug_print(f"Number of unique genes: {len(union_genes)}")
+        num_genes_same_comm = len(union_genes)
+    else:
+        num_genes_same_comm = None
+
+    return consensus, coassoc, partitions, num_genes_same_comm
 
 
 
@@ -1008,39 +1027,40 @@ def compute_heavy_network(apply_click,
                                                                p_value_threshold=p_threshold)
     elif dataset == 'large_kutsche':
         filtered_pairs = filter_gene_pairs_kutsche(filepath="granger_causality_results.csv",
-                                                   p_threshold=p_threshold,
+                                                   p_threshold=pvalue_global,
                                                    starting_genes=genelist_global,
                                                    higher_threshold_for_starting_genes=pvalue_global)
         significant_edges = collect_significant_edges_kutsche(filtered_pairs,
-                                                              p_value_threshold=p_threshold,
+                                                              p_value_threshold=pvalue_global,
                                                               file=True,
                                                               filepath=filtered_pairs,
                                                               starting_genes=genelist_global,
-                                                              higher_threshold_for_starting_genes=pvalue_global)
+                                                              higher_threshold_for_starting_genes=p_threshold)
     elif dataset == 'large_benito_human':
         filtered_pairs = filter_gene_pairs_benito(filepath="granger_causality_results_benito_Human.csv",
-                                                  p_threshold=p_threshold,
+                                                  p_threshold=pvalue_global,
                                                   starting_genes=genelist_global,
                                                   higher_threshold_for_starting_genes=pvalue_global)
         significant_edges = collect_significant_edges_benito(filtered_pairs,
-                                                             p_value_threshold=p_threshold,
+                                                             p_value_threshold=pvalue_global,
                                                              file=True,
                                                              filepath=filtered_pairs,
                                                              starting_genes=genelist_global,
-                                                             higher_threshold_for_starting_genes=pvalue_global)
+                                                             higher_threshold_for_starting_genes=p_threshold)
     elif dataset == 'large_benito_gorilla':
         filtered_pairs = filter_gene_pairs_benito(filepath="granger_causality_results_benito_Gorilla.csv",
-                                                  p_threshold=p_threshold,
+                                                  p_threshold=pvalue_global,
                                                   starting_genes=genelist_global,
                                                   higher_threshold_for_starting_genes=pvalue_global)
         significant_edges = collect_significant_edges_benito(filtered_pairs,
-                                                             p_value_threshold=p_threshold,
+                                                             p_value_threshold=pvalue_global,
                                                              file=True,
                                                              filepath=filtered_pairs,
                                                              starting_genes=genelist_global,
-                                                             higher_threshold_for_starting_genes=pvalue_global)
+                                                             higher_threshold_for_starting_genes=p_threshold)
     else:
         significant_edges = []
+    debug_print(f"Significant edges: {significant_edges[:10]}")
 
     if not significant_edges:
         return None
@@ -1049,11 +1069,14 @@ def compute_heavy_network(apply_click,
     
     # Run community detection (you may choose consensus or another method)
     if community_detection_method == 'consensus':
-        consensus, coassoc, partitions = consensus_partition(G, n_runs=num_consensus_runs)
+        consensus, coassoc, partitions, n_of_genes_in_interest_gene_community = consensus_partition(G, n_runs=num_consensus_runs, gene_of_interest="ZEB2")
         partition = consensus
         gene_of_interest = "ZEB2"  # adjust gene if needed
         if gene_of_interest in consensus:
             debug_print(f"Consensus: Gene {gene_of_interest} is in community {consensus[gene_of_interest]}")
+        if n_of_genes_in_interest_gene_community != None:
+            debug_print(f"There were {n_of_genes_in_interest_gene_community}/{len(partition)} unique genes in the community of across {num_consensus_runs} runs of Louvain in the same community as {gene_of_interest}")
+
     else:
         partition = cached_apply_community_detection(pickle.dumps(G), community_detection_method,
                                                      num_communities if community_detection_method != 'louvain' else None)

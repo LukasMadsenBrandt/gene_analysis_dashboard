@@ -90,6 +90,7 @@ def collect_significant_edges(gc_results, p_value_threshold=0.05, file=False, fi
     and whether the relationship is positive or negative.
     """
     significant_edges = []
+    test = []
     # If the results are not stored, we can directly access the results
     if not file:
         for (gene1, gene2), results in gc_results.items():
@@ -118,7 +119,9 @@ def collect_significant_edges(gc_results, p_value_threshold=0.05, file=False, fi
                 
                 if p_value <= p_value_threshold or ((gene1 in starting_genes or gene2 in starting_genes) and p_value <= higher_threshold_for_starting_genes):
                     significant_edges.append(((gene1, lag), (gene2, 0), p_value))
+                    test.append(f"Adding edge: {gene1} -> {gene2} at lag {lag} with p-value {p_value}, starting genes: {starting_genes}, higher_threshold_for_starting_genes: {higher_threshold_for_starting_genes}")
                     
+    print(test[:10])
     return significant_edges
 
 
