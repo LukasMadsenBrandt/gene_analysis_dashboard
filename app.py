@@ -216,10 +216,11 @@ def build_coassociation_matrix(G, partitions):
     coassoc /= len(partitions)
     return nodes, coassoc
 
-def consensus_partition(G, n_runs=20, n_clusters=None, gene_of_interest=None):
+def consensus_partition(G, n_runs=20, n_clusters=None, gene_of_interest=None, plot = None):
     partitions = run_multiple_louvain_parallel(G, n_runs)
     nodes, coassoc = build_coassociation_matrix(G, partitions)
     
+    plot = True
     # If n_clusters is not provided, compute it as the average number of communities over all partitions.
     if n_clusters is None:
         total_communities = sum(len(set(partition.values())) for partition in partitions)
@@ -248,12 +249,89 @@ def consensus_partition(G, n_runs=20, n_clusters=None, gene_of_interest=None):
                 #debug_print(f"Gene of interest {gene_of_interest} is in community {current_comm}")
                 #debug_print(f"Unique gene: {union_genes}")
                 #debug_print(f"Number of unique genes: {len(union_genes)}")
-        num_genes_same_comm = len(union_genes)
+        # Plot the consensus matrix, I.E the freaquencies of two genes being in the same community
+        # Only plot the matrix with the pair of the gene of interest and the rest of the genes
+        if plot:
+            plot_coassociation_for_gene(coassoc, nodes, gene_of_interest, n_runs, plots_dir)
     else:
         num_genes_same_comm = None
 
+
+
+
     return consensus, coassoc, partitions, num_genes_same_comm
 
+import plotly.express as px
+import plotly.io as pio
+
+def plot_coassociation_for_gene(coassoc, nodes, gene_of_interest, n_runs, save_dir):
+    """
+    Plot an interactive scatter plot showing the coassociation frequency for each gene 
+    with respect to the gene_of_interest, based on the coassociation matrix.
+    
+    Parameters:
+        coassoc (np.ndarray): The coassociation matrix (assumed symmetric).
+        nodes (list): List of gene names corresponding to the rows/columns of coassoc.
+        gene_of_interest (str): The gene to inspect (e.g. "ZEB2").
+        n_runs (int): Number of consensus runs (used in the filename).
+        save_dir (str): Directory to save the plot.
+
+    Returns:
+        fig (plotly.graph_objects.Figure): The interactive figure.
+    """
+    # Find the index of the gene of interest in the nodes list.
+    try:
+        idx = nodes.index(gene_of_interest)
+    except ValueError:
+        raise ValueError(f"Gene {gene_of_interest} not found in the nodes list.")
+
+    # Extract the row corresponding to the gene of interest.
+    frequencies = coassoc[idx, :]
+
+    # Create a DataFrame for plotting.
+    import pandas as pd
+    df = pd.DataFrame({
+        'Gene': nodes,
+        'Coassociation Frequency': frequencies,
+        'Index': list(range(len(nodes)))
+    })
+    # Optionally, remove the gene of interest itself.
+    df = df[df['Gene'] != gene_of_interest]
+    
+    # Create an interactive scatter plot using Plotly Express.
+    fig = px.scatter(
+        df,
+        x='Index',
+        y='Coassociation Frequency',
+        hover_data={'Gene': True, 'Coassociation Frequency': ':.4f'},
+        title=f'Coassociation Frequencies for Genes with {gene_of_interest}',
+    )
+    
+    # Remove x-axis tick labels since we don't need gene names there.
+    fig.update_layout(
+        xaxis=dict(
+            showticklabels=False,
+            title="",
+        ),
+        yaxis_title="Coassociation Frequency",
+    )
+
+    # Save the interactive plot as an HTML file.
+    html_filename = f"coassoc_{gene_of_interest}_n_runs_{n_runs}.html"
+    html_path = os.path.join(save_dir, html_filename)
+    pio.write_html(fig, file=html_path, auto_open=False)
+    debug_print(f"Interactive coassociation plot saved to {html_path}")
+
+    # Additionally, save as a static image (PNG) if needed.
+    png_filename = f"coassoc_{gene_of_interest}_n_runs_{n_runs}.png"
+    png_path = os.path.join(save_dir, png_filename)
+    try:
+        fig.write_image(png_path)
+        debug_print(f"Static coassociation plot saved to {png_path}")
+    except Exception as e:
+        debug_print(f"Error saving static image: {e}")
+
+    return fig
 
 
 
