@@ -279,6 +279,7 @@ def plot_coassociation_for_gene(coassoc, nodes, gene_of_interest, n_runs, save_d
     Returns:
         fig (plotly.graph_objects.Figure): The interactive figure.
     """
+    gene_of_interest = "RPL8"
     # Find the index of the gene of interest in the nodes list.
     try:
         idx = nodes.index(gene_of_interest)
@@ -295,7 +296,7 @@ def plot_coassociation_for_gene(coassoc, nodes, gene_of_interest, n_runs, save_d
         'Coassociation Frequency': frequencies,
         'Index': list(range(len(nodes)))
     })
-    # Optionally, remove the gene of interest itself.
+    # Remove the gene of interest itself.
     df = df[df['Gene'] != gene_of_interest]
     
     # Create an interactive scatter plot using Plotly Express.
