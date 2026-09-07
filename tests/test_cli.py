@@ -64,6 +64,19 @@ def test_render_network_figures_cli_help():
     assert "--all-layouts" in result.stdout
 
 
+def test_zeb2_regression_cli_help():
+    result = subprocess.run(
+        [sys.executable, "scripts/experiments/zeb2_regression.py", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "--config" in result.stdout
+    assert "--quadratic-p-threshold" in result.stdout
+
+
 def test_run_pipeline_cli_fails_for_missing_config():
     result = subprocess.run(
         [sys.executable, "scripts/pipeline/run_pipeline.py", "--config", "missing.yml"],

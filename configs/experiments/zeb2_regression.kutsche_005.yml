@@ -1,0 +1,15 @@
+# Isolated sample-level regression experiment. This is not a pipeline default.
+dataset: kutsche
+expression_file: Data/Kutsche/genes_all.txt
+anchor_gene: ZEB2
+
+# Methodological parameter for choosing the target's linear/quadratic time model.
+# The default is explicit for reproducibility and is not a finalized scientific choice.
+quadratic_p_threshold: 0.05
+
+# Match the current production Kutsche configuration while retaining replicates.
+preprocessing:
+  normalize: none
+  transform: none
+
+output_file: results/experiments/zeb2_regression/zeb2_regression_results.csv
